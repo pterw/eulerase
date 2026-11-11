@@ -1,0 +1,280 @@
+# Eulerase v0.1: opening the repository Implementation Plan
+
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+
+**Goal:** Write what a reader and a contributor need on the first day (README, CI workflow, pull request and issue templates, CONTRIBUTING, AGENTS.md), then open the repository, private, with the core and the command line in it, and watch its first CI run.
+
+**Architecture:** Documents and one workflow file. The workflow, the templates and CONTRIBUTING touch nothing the core touches, so they are written beside the first plan's waves. README and AGENTS.md are shared files that the first plan's task A creates in a minimal form; they are completed here, one writer at a time, after the first plan's last task has landed, from facts read out of the landed code. The opening itself is done by the controller, never by an implementer, because it pushes.
+
+**Tech Stack:** GitHub Actions, Markdown, `gh`, git; pytest for the one test of this plan.
+
+**Spec:** `docs/superpowers/specs/2026-11-09-eulerase-v0.1-design.md`, sections 1, 1.1, 1.2, 6.4, 6.6, 8.1, 9, 11, 12 and 12.1 (the authority; where this plan and the spec disagree, the spec wins). Section 9, "Opening the repository", is what this plan carries out. The first plan is `docs/superpowers/plans/2026-11-09-eulerase-v0.1-core.md`; its task ids (`A` to `AD`) are used below only in the Dispatch table.
+
+Sections: Global Constraints=brief, Dispatch=reference, Frozen interfaces=brief, File structure=reference, Opening (controller)=reference, What stays open=reference, What cannot be checked here=reference
+
+## Global Constraints
+
+- **The spec is the authority.** A task that cannot be done as the spec says returns NEEDS_CONTEXT; it does not improvise. Parked and dropped features (spec section 3) are not built, described as built, or promised.
+- **Only what is shipped.** The opening is the core and the command line. The window, the Windows executable and the release report belong to the second plan and are not built. Every document says only what exists at the head it is written for. No screenshot of a window exists; the README says the window is not built yet, in the words the command prints (`The window is not built yet; give --seq, --kmers or --file.`). No document says "tested on Linux", "verified" or "supported on Linux" as a result: the workflow is described, a green run is reported by the controller.
+- **Independence and the boundary.** Eulerase reads no genotype files, looks up no variant identifiers and interprets nothing for a person (spec 1.1). Documents name no other project except where spec 1.1 does so for the boundary; they do not describe the original explorer or where it lives.
+- **Public repository.** No tracked file, commit message or test holds a user-folder path, a drive-letter path, a personal name other than the licence holder, an email address, or a path into any workspace. The source being carried is named only as `$EULERASE_SOURCE`, and only in a plan. This plan is itself a tracked file. Gate lines are relative to the repository root.
+- **Three claims kept apart** (spec 1.2): a trail is correct for the graph; a contig is a valid path in the assembly graph built from the k-mers given; a sequence exists in an organism. Eulerase makes the first two and never the third. A contig is not a validated assembly.
+- **Multiplicity is not depth** (spec 5.1). Documents say "multiplicity" or "times seen", never "coverage" or "depth", except for simulated reads where the term is correct. The filters (minimum multiplicity, tip clipping) act as error filters only when the input is a set of reads; on a single assembled sequence a low count marks a rarer k-mer, not an error; tip clipping can remove the true end of a sequence. The only two simplifications any document names are those two.
+- **Facts come from the landed code.** A document that quotes a help text, a limit, an example or a rule reads it from the tree at its BASE and runs it. It does not copy it from this plan or the spec. Where the code and the spec disagree, return NEEDS_CONTEXT.
+- **No finding, task or review ids in documents** (README, CONTRIBUTING, AGENTS.md, templates). Anti-patterns are written in words.
+- **No Dependabot and no scheduled run at opening.** Decided: dependencies are pinned exactly, and both are added later only if they earn their keep (see "What stays open"). There is no CD: nothing is published in v0.1, so there is no deployment, no release job and no secret.
+- **Checks that are not tests.** A document is checked by its reviewer against the spec and the landed code, not by a test that pins its wording. The one test of this plan (task RH) compares two documents' commands and fails when they drift.
+- **Commits.** `type(scope): summary` as each task names. One concern each. The body explains, for a developer reading `git log`, what the file is for and why it says what it says. No finding, task or review ids, no brief or untracked file cited, no attribution trailer. Stage files by name; never `git add -A`; never amend, rebase, reset, stash, push or `--no-verify`. Wrap at 72.
+- **Shell.** Never `sed -i`. A denied tool call is reported, never retried another way. Bound every command with a timeout. Scratch files go in a `mktemp -d` directory outside the repository.
+- **Shared files** (`README.md`, `AGENTS.md`, `pyproject.toml`, `LICENSE`, `.gitignore`): in this plan only tasks RF (README) and RG (AGENTS.md) edit them, both `Mode: serial`.
+
+## Dispatch
+
+Frozen: the section "Frozen interfaces" below is part of every task brief. An implementer who needs a name or shape changed returns NEEDS_CONTEXT.
+
+The first plan's "Left for the second plan" gives the README and AGENTS.md in full to a second plan. This plan takes from that list everything that does not need the window; the presenter, the window, the executable and the release report stay for the second plan.
+
+"Starts when" names tasks of the first plan, by its task ids. The tasks of this plan that are `Mode: code` need only the first plan's task A landed (the `.github` files and CONTRIBUTING.md touch nothing the core touches). The two `Mode: serial` tasks need the first plan's last task, AD.
+
+| Wave | Tasks | Starts when | Notes |
+|---|---|---|---|
+| 1 | RA, RB | A landed | `.github/workflows/gates.yml`, pull request template |
+| 2 | RC, RD | A landed | issue templates; wave 2 only caps this plan at two code tasks at once |
+| 3 | RE | A landed | `CONTRIBUTING.md` |
+| 4 | RF | AD landed, RE landed | serial; `README.md` |
+| 5 | RG | RF landed | serial; `AGENTS.md` |
+| 6 | RH | RG landed | the workflow-matches-documented-gates test |
+
+Agent budget. The ceiling for both plans together is 12 agents, counted as 3 per code task in flight (the task, its nested gate-runner, its reviewer). This plan's code tasks run at most two at a time, so it adds at most 6 agents (waves 1 and 2); wave 3 adds 3, waves 4 and 5 add 1 (serial tasks), wave 6 adds 3. The controller dispatches a task of this plan only when the count of both plans stays at 12 or below. It never starts one while the first plan's waves 6, 7 or 8 (four code tasks, 12 agents) run, and while the first plan's wave 3 (three tasks, 9 agents) runs it starts at most one. A task that could not start before the first plan's wave 6 waits for its wave 9. The first plan's tasks never wait for this plan.
+
+Landing order: by wave, in id order within a wave (RA, RB, RC, RD, RE, RF, RG, RH). Landings are one at a time on `main`, interleaved with the first plan's landings at whatever point they happen: the controller applies the patch, stages the task's files by name, runs the three gates in the order of the block below, commits with the task's subject and dispatches a gate-runner at that HEAD before the next landing. The tasks of this plan touch no file the first plan's tasks touch before RF, so no conflict is expected; any conflict returns NEEDS_CONTEXT.
+
+Gates block for the controller's gate list (the same three as the first plan; the third is added when the first plan's task A lands):
+
+```gates
+- name: pytest
+  run: python -m pytest -q -p no:cacheprovider
+  pass: exit 0
+  quote: last line
+- name: ruff
+  run: python -m ruff check .
+  pass: exit 0
+  quote: last line
+- name: fresh-export
+  run: python tools/check_fresh_export.py
+  pass: exit 0
+  quote: last line
+```
+
+The third gate reads tracked files from the working tree: a new file must be staged by name before it runs, or the export lacks it. A document-only task still runs all three.
+
+After RH lands and every task of both plans is landed, the controller runs "Opening (controller)". No implementer pushes.
+
+## Frozen interfaces
+
+**Files and subjects.**
+
+| Task | File | Commit subject |
+|---|---|---|
+| RA | `.github/workflows/gates.yml` | `chore(ci): run the gates on Windows and Linux for every change` |
+| RB | `.github/PULL_REQUEST_TEMPLATE.md` | `docs(github): add a pull request template` |
+| RC | `.github/ISSUE_TEMPLATE/bug_report.md` | `docs(github): add a bug report template` |
+| RD | `.github/ISSUE_TEMPLATE/feature_request.md` | `docs(github): add a feature request template` |
+| RE | `CONTRIBUTING.md` | `docs: add CONTRIBUTING` |
+| RF | `README.md` | `docs(readme): describe what is shipped` |
+| RG | `AGENTS.md` | `docs(agents): complete the engineering rules` |
+| RH | `tests/test_ci_gates.py` | `test(ci): check the workflow runs the documented gates` |
+
+**The workflow (task RA).** One file, workflow name `Gates`. Trigger, exactly:
+
+```yaml
+on:
+  pull_request:
+  push:
+    branches: [main]
+```
+
+`permissions: contents: read` at the top. One job with id `gates`, `name: gates (${{ matrix.os }})`, `runs-on: ${{ matrix.os }}`, `timeout-minutes: 20`, `strategy.fail-fast: false`, matrix `os: [windows-latest, ubuntu-latest]`. `defaults.run.shell: bash`, so the same lines run on both systems. Steps in order: `actions/checkout` with `persist-credentials: false`; `actions/setup-python` with `python-version: "3.13"` and pip caching keyed on `pyproject.toml`; then the install and the three gates, each a step with a **single-line** `run:` (no `|` or `>` block, so the lines can be compared). The `run:` lines, byte for byte and in this order:
+
+```
+python -m pip install -e .[dev]
+python -m pytest -q -p no:cacheprovider
+python -m ruff check .
+python tools/check_fresh_export.py
+```
+
+A `concurrency` group on workflow and ref with `cancel-in-progress: true` is allowed. No `env:` value that hides a difference between the two systems (no forced encoding, no forced backend): a red on one system is a finding. No deployment, release or secret. Actions are pinned to a full commit SHA with the version in a comment if the implementer can verify the SHA offline from a file in the repository; otherwise to the major tag (`actions/checkout@v4`, `actions/setup-python@v5`), and the report says which and why. A one-line comment in the file says there is no CD because nothing is published in v0.1.
+
+**AGENTS.md gates block (task RG; read by task RH).** Under a heading `## Gates`, one fenced block whose info string is `gates`, with the same three items, in the same order, and the same keys as the Dispatch block above (`name`, `run`, `pass`, `quote`). Each `run:` value is on one line. This block is the repository's statement of the gate commands; the workflow must equal it.
+
+**Pull request template (task RB).** Headings, in order: `## Summary` (what changed and why), `## How it was checked` (the head SHA, then one line per gate in the order above with its last output line quoted: pytest, ruff, fresh-export; and the CI run link once it is green), `## Not run` (anything not run or not checked, said plainly; "nothing" is allowed only if true). Comments in the file say: quote output, do not paraphrase it; a gate not run is listed under "Not run". No attribution line is asked for.
+
+**Issue templates (tasks RC, RD).** Markdown templates with front matter (`name`, `about`, `title`). `bug_report.md` asks for: the exact command or the input given, the expected result, the actual result with the output copied, the platform and Python version, and `eulerase.__version__` (read with `python -c "import eulerase; print(eulerase.__version__)"`); it warns that the issue is public and that sequences pasted into it are public. `feature_request.md` asks for the problem before the solution; before filing, the reporter checks spec section 3 (the table of kept, parked and dropped features) and section 8.3 (the truth tests a parked feature must pass to return): a parked feature is not requested as if new, and a request for one names the truth test it would pass. It states the boundary of spec 1.1 (no genotype files, no variant lookup, no interpretation for a person). Links to the spec use its path in the repository.
+
+**CONTRIBUTING.md (task RE)** has these sections: what the project is in one sentence; setup (Python 3.13, a virtual environment, `python -m pip install -e .[dev]`); the gates (the three commands, their order, that the third reads tracked files so new files are staged first); the commit format (`type(scope): summary`, a body that explains the problem, the change, why this design and which tests pin it, one concern per commit, no ids, no attribution trailer); the test rules of spec 8.1 in short; how a change to behaviour starts (the spec is the authority, a departure from it is made by changing the spec in a commit of its own with the reason, a parked feature returns only through its truth tests); the pull request (the template, the gates quoted, what was not run); a line that CI runs the three gates on Windows and Linux for every pull request and on `main`, and that nothing is published so there is no release process yet; a pointer to AGENTS.md for the rules an agent or model follows.
+
+**README.md (task RF)** has: what Eulerase is, in the spec's words for section 1, with the three claims kept apart; the boundary (spec 1.1); install from a clone (nothing is published) and the gates; the command line, with each option group, the exit statuses (0, 1, 2) and the examples; the limits table (spec 6.4); what it does not do; what a multiplicity is and the A3 statements about the filters; the statement of the ORF rule (the sentence `orfs.orf_rule_text()` returns) and what the `orfs` column counts; the sentence that the GenBank writer sets its date field to a fixed value, `01-JAN-1980`, so files are byte-identical across runs; the determinism promise in one short paragraph (spec 6.3: text outputs identical; figure data reproducible; image bytes not promised); the licence; a "Status" section saying the window and the Windows executable are not built yet and that the command prints `The window is not built yet; give --seq, --kmers or --file.` when given no input.
+
+**Facts RF reads from the landed code** (each quoted in the report with the command that produced it): the output of `eulerase --help`; the values of `eulerase.kmers.MAX_KMERS`, `eulerase.render.MAX_DRAW_NODES`, `eulerase.analysis.MAX_TABLE_ROWS`, `eulerase.orfs.MIN_ORF_AA`, `eulerase.analysis.DEFAULT_K`; `eulerase.orfs.orf_rule_text()`; the Contigs table columns from `eulerase.analysis.columns("Contigs")` and how `orfs` is computed; the date literal in `eulerase.io`; and every `main([...])` invocation in `tests/test_cli*.py` (the only examples the README may use).
+
+**AGENTS.md (task RG)** has these sections: document roles (spec, plans, README, CONTRIBUTING, AGENTS.md: what each is for and which wins); setup; `## Gates` (block above); commit rules; test rules (spec 8.1); the anti-pattern list; the rules of spec 12.1; the ten invariants of spec section 9, copied in the spec's words and numbered as there. The anti-pattern list is seeded from spec section 4 and written in words, without finding ids. It holds at least: a default that removes data (an automatic cutoff); a filter that compares nothing and depends on input order; ordering taken from hashing or from a set; a label or option name that says "coverage" or "depth" for a count of occurrences; a check that reads the code against itself; a test that pins wording or a constant; output taken from the clock, the host or a path; text files written with the platform's line endings; a format guessed from a file name; a path that does not exist read as a sequence; an option accepted and ignored; a failure that ends in a traceback after some output was written; an importing side effect; a table whose header and value come from two definitions; a failed step that leaves an old result visible; a count reported as depth, copy number or evidence of anything in an organism; a parked feature built because it was easy. It does not name the original explorer's location.
+
+## File structure
+
+| File | Responsibility | Task |
+|---|---|---|
+| `.github/workflows/gates.yml` | the three gates on Windows and Linux | RA |
+| `.github/PULL_REQUEST_TEMPLATE.md` | what a pull request states | RB |
+| `.github/ISSUE_TEMPLATE/bug_report.md`, `feature_request.md` | what an issue states | RC, RD |
+| `CONTRIBUTING.md` | how to work on the project | RE |
+| `README.md` | what the tool is and does, for a reader | RF |
+| `AGENTS.md` | the engineering rules for any agent or model | RG |
+| `tests/test_ci_gates.py` | the workflow equals the documented gates | RH |
+
+### Task RA: The CI workflow
+
+Wave: 1 · Touches: .github/workflows/gates.yml · After: none · Mode: code
+
+Behaviour: every pull request and every push to `main` runs the three gates, in the first plan's order, on `windows-latest` and `ubuntu-latest`, with Python 3.13. Spec 9 (Gates), 12 step 1. Shape only (never copy names or product text) from the author's other repository: a `Gates` workflow with `pull_request` and `push` to `main`, `permissions: contents: read`, a concurrency group, a job timeout, `persist-credentials: false`.
+
+- [ ] **Step 1: Write the workflow** exactly as "The workflow (task RA)" of Frozen interfaces says: trigger, permissions, one matrix job, the four single-line `run:` lines in order. Comments: one line that a green run means the same as a green local run, one line that there is no CD because nothing is published in v0.1.
+- [ ] **Step 2: Pins.** Look for a full commit SHA of each action in files of the repository that already hold one (grep `.github/` and `docs/`). If you cannot verify a SHA offline, use `actions/checkout@v4` and `actions/setup-python@v5` and say in the report that the major-tag pin is a known weakness to be raised when the owner chooses to add automated updates. Do not invent a SHA.
+- [ ] **Step 3: Check offline.** Quote: the four `run:` lines (`grep -n "run:" .github/workflows/gates.yml`); that no `run:` value is a block (`grep -n "run: [|>]"` prints nothing); that the file parses as YAML if a parser is installed (`python -c "import yaml"` may be absent; if so say "not parsed" and do not install one). Say that no run on a hosted runner was made.
+- [ ] **Step 4: Gates, then commit** with the subject in Frozen interfaces. Stage the file by name first.
+
+Sweep terms: none.
+
+### Task RB: Pull request template
+
+Wave: 1 · Touches: .github/PULL_REQUEST_TEMPLATE.md · After: none · Mode: code
+
+Behaviour: a pull request states what changed and why, how it was checked with the gate output quoted, and what was not run (spec 8.1 "say what was run"; spec 12.1). Shape only from the author's other repository: a summary, a validation list with one line per gate, comments that tell the author what to quote.
+
+- [ ] **Step 1: Write the template** as "Pull request template (task RB)" of Frozen interfaces says. It names no task, finding or plan.
+- [ ] **Step 2: Check** that the three gate lines carry exactly the commands of the Gates block (copy them from the Dispatch block) and that the file holds no path outside the repository. Quote the file's headings (`grep -n "^## "`).
+- [ ] **Step 3: Gates, then commit** with the subject in Frozen interfaces.
+
+Sweep terms: none.
+
+### Task RC: Bug report template
+
+Wave: 2 · Touches: .github/ISSUE_TEMPLATE/bug_report.md · After: none · Mode: code
+
+Behaviour: a bug report holds what a maintainer needs to reproduce it with no further questions, and warns that the issue is public.
+
+- [ ] **Step 1: Write the template** as "Issue templates (tasks RC, RD)" of Frozen interfaces says (front matter `name: Bug report`, `about`, `title: "bug: "`, no labels since none exist at opening).
+- [ ] **Step 2: Check** that the version command it gives runs and prints the version (run it, quote the line), and that front matter parses as `---` delimited lines with the three keys.
+- [ ] **Step 3: Gates, then commit** with the subject in Frozen interfaces.
+
+Sweep terms: none.
+
+### Task RD: Feature request template
+
+Wave: 2 · Touches: .github/ISSUE_TEMPLATE/feature_request.md · After: none · Mode: code
+
+Behaviour: a feature request starts from a problem, sends the reporter to the table of parked and dropped features and to the truth tests, so a parked feature is not requested as if new, and states the boundary. Spec 3, 8.3, 1.1 and invariant 9.
+
+- [ ] **Step 1: Write the template** as "Issue templates (tasks RC, RD)" of Frozen interfaces says (front matter `name: Feature request`, `about`, `title: "feature: "`). Read spec section 3 and section 8.3 and name the parked features by their spec names (the automatic error model, contig binning, comparison of contigs with a reference), the dropped ones by section, and the truth tests by section number; do not restate the tests.
+- [ ] **Step 2: Check** that every spec path and section number it cites exists (`grep -n "^## 3\.\|^### 8\.3" docs/superpowers/specs/*.md`), quoting the output.
+- [ ] **Step 3: Gates, then commit** with the subject in Frozen interfaces.
+
+Sweep terms: none.
+
+### Task RE: CONTRIBUTING
+
+Wave: 3 · Touches: CONTRIBUTING.md · After: RB · Mode: code
+
+Behaviour: a contributor can set up, run the gates, write a commit and open a pull request from this file alone, and knows that a change to behaviour starts with the spec. Spec 9 (CONTRIBUTING), 8.1, 12.1.
+
+- [ ] **Step 1: Read** the repository's `AGENTS.md` (the minimal one from the first plan's task A), `pyproject.toml` and `tools/check_fresh_export.py` for the commands and the dev dependency group. The commands in the file are the ones the workflow and AGENTS.md carry.
+- [ ] **Step 2: Write** `CONTRIBUTING.md` as "CONTRIBUTING.md (task RE)" of Frozen interfaces says. It points at the pull request template and the two issue templates by path. It says nothing about the window, the executable or a release.
+- [ ] **Step 3: Check.** Run the setup commands it gives in a scratch virtual environment outside the repository if one can be made without network access; if not, say "setup not run" and do not claim it works. Run the three gate commands it gives and quote their last lines.
+- [ ] **Step 4: Gates, then commit** with the subject in Frozen interfaces.
+
+Sweep terms: none.
+
+### Task RF: README in full for what is shipped
+
+Wave: 4 · Touches: README.md · After: RE · Mode: serial
+
+Behaviour: a reader learns what Eulerase is, what it does not do, how to install and run it, and sees examples that were run. Every statement is true of the tree at BASE. Spec 9 (README), 1, 1.1, 1.2, 5.1, 6.4, 6.6, B7, A3. Replaces the minimal README of the first plan's task A.
+
+- [ ] **Step 1: Read the facts** listed under "Facts RF reads from the landed code" in Frozen interfaces, by running the commands named there, and keep the output for the report. Read the current `README.md` and keep its install and gate lines.
+- [ ] **Step 2: Choose the examples.** List every `main([...])` call in `tests/test_cli*.py` that a reader would recognise as a use (a typed sequence, a set of k-mers, a file, `--metrics`, `--both-strands`, `--csv`, `--gfa`, a failure with exit 1 or 2). The README uses only these, one per kind that exists. A kind with no test is left out and named in the report; do not add a test in this task.
+- [ ] **Step 3: Write `README.md`** as "README.md (task RF)" of Frozen interfaces says. The limits table has the five values read in Step 1, each with what happens above it (spec 6.4: refused before any work with the limit in the message; the figure says why it is empty; a cut table says how many rows of how many; an export always carries every row). If the first k-mer limit differs from 500,000, the README states the value in the code. The A3 statements about `--min-count` and `--clip-tips` use the help text's meaning, not new claims. No screenshot, no link to an image, no claim about speed, size or platforms tested.
+- [ ] **Step 4: Run every example command** of the README from the repository root (headless, `MPLBACKEND=Agg`; any file it writes goes to a scratch directory, never into the repository), compare its output with the lines the README shows, and quote each command and its output in the report. The README shows output exactly as the command printed it. Run every exit-status claim the same way. Mark any command not run.
+- [ ] **Step 5: Check the claims.** For each sentence that states a number, a rule or an option, quote the line of code, help text or test that makes it true, in a table in the report (sentence, source). A sentence without a source is removed.
+- [ ] **Step 6: Gates, then commit** with the subject in Frozen interfaces.
+
+Sweep terms: "coverage", "depth", the to-do markers of the leftover sweep, "screenshot", the first plan's task ids; none may appear in the file.
+
+### Task RG: AGENTS.md in full
+
+Wave: 5 · Touches: AGENTS.md · After: RF · Mode: serial
+
+Behaviour: any agent or model that picks the work up finds the document roles, the setup, the gates, the commit and test rules, the anti-patterns, the rules of spec 12.1 and the ten invariants in the spec's words. The gates block is machine-read by the test of task RH. Spec 9 (AGENTS.md, Invariants), 12.1, 4. Replaces the minimal AGENTS.md of the first plan's task A.
+
+- [ ] **Step 1: Read** the current `AGENTS.md`, spec section 9 (the invariants), section 12.1 and section 4 (for the anti-patterns). Keep every commit and test rule the minimal file already states; do not weaken one.
+- [ ] **Step 2: Write `AGENTS.md`** as "AGENTS.md (task RG)" of Frozen interfaces says. The invariants are copied from spec section 9 word for word and numbered 1 to 10. Where an invariant cites a spec section, the section number stays. The `## Gates` block is the fenced `gates` block of the Dispatch section.
+- [ ] **Step 3: Check the invariants** by a diff of the ten items against the spec text (extract both, compare with `diff`), quoting the empty output; and the gates block against the Dispatch block of this plan the same way.
+- [ ] **Step 4: Check the layout facts** it states (source layout, test layout, tools) against `git ls-files`, quoting the listing it used. It states no fact about files that do not exist.
+- [ ] **Step 5: Gates, then commit** with the subject in Frozen interfaces.
+
+Sweep terms: "coverage" (allowed only inside the anti-pattern that bans it), the first plan's task ids, finding ids.
+
+### Task RH: The workflow runs the documented gates
+
+Wave: 6 · Touches: tests/test_ci_gates.py · After: RG · Mode: code
+
+Behaviour: the gate commands CI runs equal the gate commands the repository documents, in the same order, so a change to one that forgets the other is a red. It compares two documents with each other; it does not pin wording. Spec 9 (Gates, "in CI and before a commit"), invariant 10.
+
+- [ ] **Step 1: Write the tests** in `tests/test_ci_gates.py`, with two helpers in the same file: `documented_gates(agents_text: str) -> list[str]` (the `run:` values of the fenced block whose info string is `gates` in `AGENTS.md`) and `workflow_runs(workflow_text: str) -> list[str]` (the values of every `run:` line of `.github/workflows/gates.yml`; raises `AssertionError` on a `run:` whose value is `|`, `>` or empty, so a block cannot hide a command). Tests: `test_workflow_runs_the_documented_gates_in_order` (read both files from the repository root through `Path(__file__).resolve().parents[1]`, UTF-8; the workflow's runs after its first one, the install line, equal the documented list; the install line starts with `python -m pip install`; the list has at least the three gates); `test_oracle_rejects_a_drifted_workflow` (parametrized over a workflow text with one gate removed, two gates swapped, one flag changed, an extra `run:` line between the gates, and a `run: |` block: each is reported as different or raises; the real text is the control).
+- [ ] **Step 2: Red.** Show the test fails on drift without touching tracked files: copy `.github/workflows/gates.yml` and `AGENTS.md` into a scratch directory, change one flag in the copy of the workflow, run the two helpers on the copies (a short `python -c` over the helpers imported from the test file) and quote that they differ. Then the control: on the real files they are equal.
+- [ ] **Step 3: Green.** Run `python -m pytest tests/test_ci_gates.py -q -p no:cacheprovider` and quote the last line. The file must also pass under the third gate (it reads only tracked files).
+- [ ] **Step 4: Gates, then commit** with the subject in Frozen interfaces. The body says the test compares the workflow with the documented gates and that it does not check what the gates do.
+
+Sweep terms: none.
+
+## Opening (controller)
+
+The controller does this section after every task of both plans has landed. Implementers never push. Each command is run with a timeout; its output goes to the final report. Scratch files go in a `mktemp -d` directory outside the repository.
+
+1. **Preconditions.** Every task of the first plan and of this plan is landed, reviewed and gated. On `main`'s head the three gates are green (run them once more; quote the last line of each). `git status --short` shows no tracked change, and no untracked file is expected to be part of the repository. `git remote -v` prints nothing (there is no remote yet). `gh auth status` succeeds. If any of these fails, stop and report which.
+2. **Privacy check.** The controller writes the owner's names to a scratch file `names.txt` (given name, surname, account name, the user-folder name of the machine), one per line, outside the repository; they are not written into any tracked file or message. Then, from the repository root:
+   - Tracked files, a drive-letter path: `git grep -n -I -E '[A-Za-z]:[/\\]' -- .`
+   - A user-folder segment: `git grep -n -I -E '[Uu]sers[/\\]|/home/[a-z]' -- .`
+   - An address: `git grep -n -I -E '[[:alnum:]._+-]+@[[:alnum:]-]+[.][[:alpha:]]+' -- .`
+   - A workspace path: `git grep -n -I -E '[.]superpowers|ss[w][/\\]|sd[d][/\\]' -- .`
+   - The owner's names: `git grep -n -I -i -F -f names.txt -- .`
+   - Every commit message through the same patterns: `git log --format=%B | grep -n -E -e '[A-Za-z]:[/\\]' -e '[Uu]sers[/\\]' -e '[[:alnum:]._+-]+@[[:alnum:]-]+[.][[:alpha:]]+' -e '[.]superpowers'` and `git log --format=%B | grep -n -i -F -f names.txt`.
+   - The identities that will be public: `git log --format='%an <%ae>%n%cn <%ce>' | sort -u`.
+
+   **Pass** means: each command prints nothing, except (a) the licence holder's name in `LICENSE` and the first plan's line that quotes the licence holder line, for the names command only, and (b) hits that are the pattern text itself inside a plan, which the controller reads and lists one by one (the patterns above are written so they do not match themselves; a hit is a defect until read). The identities command passes only if each address is a hosting provider's no-reply address; if one is a private address, stop and report it: rewriting history is outside this plan. Any other hit is fixed by a task before going on, never by an edit made during the opening.
+3. **Sweep for leftovers.**
+   - `git grep -n -I -E 'TO[D]O|FIXM[E]|XX[X]' -- .` prints nothing.
+   - `git grep -n -I 'not built yet' -- .` prints only: README.md (its Status section), the command's message in `src/eulerase/cli.py`, the tests of that message, the spec and the plans. Any other place is a document that promises or denies a thing the code decides; fix it by a task.
+   - The first plan's task ids in tracked files that are not plans: `git grep -n -I -E '\b[Tt]ask [A-Z][A-Z0-9]*\b' -- . ':!docs/superpowers/plans'` prints nothing.
+   - Finding ids in the documents: `git grep -n -E '\b(A[1-8]|B[2679]|D([2-9]|1[02])|G1|R[1-3])\b' -- README.md AGENTS.md CONTRIBUTING.md .github` prints nothing (read each hit; a word that happens to match is listed, not edited).
+   - `git ls-files` lists no file the repository should not hold (no scratch, cache, export or `.env`).
+4. **Create the repository and push.** Owner, 2026-11-11: the goal is "the Eulerase repo initial commit open with the README.md, AGENTS.md, the tool, the CI/CD config"; "It can be kept private." So:
+   - `gh repo create eulerase --private --source . --remote origin` (no `--push`).
+   - `git rev-parse HEAD` gives `<sha>`; confirm it is the head the gates ran on. Then `git push --atomic origin <sha>:refs/heads/main`.
+   - `gh repo view eulerase --json url,visibility` and quote the address and that the visibility is private.
+5. **Watch the first run.** Replace the `## CI` section of the controller's constraints file ("None yet") with the CI block in the form the ci-watcher reads: workflow `Gates`; event `push` to `main`; the two jobs `gates (windows-latest)` and `gates (ubuntu-latest)`. Dispatch a ci-watcher in the background for `<sha>` and wait for its summary. Quote each job's result.
+6. **If the first run is red.** Linux has never run this code, so a red is expected to be possible. The failing job's log names the failing test or step. Say apart (a) a red that is the test's fault (it assumed Windows paths, line endings, a locale, a tool that is not on the runner) and (b) a red that is the code's fault (the tool behaves differently on Linux). Then, in this order: a fresh implementer fixes it in a code phase with the failing test first (for (a) the test is made correct for both systems without being weakened; for (b) the test stays and the code is fixed); a reviewer reads it; the controller lands it, runs the three gates locally, and pushes by SHA with `git push --atomic origin <new-sha>:refs/heads/main`; a new watcher follows that SHA. At most three such loops. After the third red, or when a red is not reproducible or has a cause outside the repository (a runner image, a service), the controller stops and reports what is red and why, without further changes. A red is never made green by skipping or loosening a test or removing a matrix entry.
+7. **Final report.** The repository's address; the head SHA; the CI run and its result per job (green, red with the reason, or not finished); the privacy and leftover checks with their output; and everything "not checked": the Windows executable, the `KC` tag against the GFA text, anything Linux showed, any behaviour on a Python other than 3.13, and that the actions are pinned to major tags if RA could not verify a SHA.
+
+## What stays open
+
+- **The second plan** (spec 12 steps 5 to 8): the presenter, the window, the README's window parts and screenshot, the hands-on pass, the Windows executable with its measurements, and `docs/v0.1-report.md`.
+- **The `KC` check.** The definition of `KC`, and the use of a lower-case `st` tag on the GFA header line, are not confirmed against the text of the GFA 1 specification. It needs the owner's approval for network access. It is a release item (spec 11), not an opening item.
+- **Dependabot and a scheduled run.** Decided not to add them at opening (dependencies are pinned exactly). Revisit at the release, when the report records a pinned dependency with a published advisory, or when the owner asks; a scheduled run would also be the first way to notice a change in a runner image. Pinning actions to SHAs goes with the same decision if RA could only use major tags.
+- **Branch protection and required checks.** Not set by this plan; the controller reports that they are not set.
+
+## What cannot be checked here
+
+- **A hosted run.** The workflow is written and read offline. Its syntax, the runner images and the behaviour on Linux are first shown by the run in Opening step 5. No result for Linux is claimed before it.
+- **The pins of the actions.** A SHA cannot be verified without the network; if RA uses major tags, that is reported, not hidden.
+- **Document truth beyond the checks.** The README and AGENTS.md are checked by running their commands and by quoting a source for each claim, and by a reviewer. No test pins their wording, so a later change to the code can make a sentence stale; the reviewer of any task that changes a help text, a limit or a rule reads the README for it.
+- **Setup from a clean machine.** RE runs the setup only if a scratch environment can be made without the network.
+- **Platform line endings of the checkout.** The first plan's byte tests write files with `\n`; whether a Windows checkout changes the line endings of tracked files is first seen in the hosted run.
