@@ -20,7 +20,8 @@ Sections: Global Constraints=brief, Dispatch=reference, Frozen interfaces=brief,
 - **Public repository.** No tracked file, commit message or test holds a user-folder path, a drive-letter path, a personal name other than the licence holder, an email address, or a path into any workspace. The source being carried is named only as `$EULERASE_SOURCE`, and only in a plan. This plan is itself a tracked file. Gate lines are relative to the repository root.
 - **Three claims kept apart** (spec 1.2): a trail is correct for the graph; a contig is a valid path in the assembly graph built from the k-mers given; a sequence exists in an organism. Eulerase makes the first two and never the third. A contig is not a validated assembly.
 - **Multiplicity is not depth** (spec 5.1). Documents say "multiplicity" or "times seen", never "coverage" or "depth", except for simulated reads where the term is correct. The filters (minimum multiplicity, tip clipping) act as error filters only when the input is a set of reads; on a single assembled sequence a low count marks a rarer k-mer, not an error; tip clipping can remove the true end of a sequence. The only two simplifications any document names are those two.
-- **Facts come from the landed code.** A document that quotes a help text, a limit, an example or a rule reads it from the tree at its BASE and runs it. It does not copy it from this plan or the spec. Where the code and the spec disagree, return NEEDS_CONTEXT.
+- **Facts come from the landed code.** A document that quotes a help text, a limit, an example or a rule reads it from the tree at its BASE and runs it. It does not copy it from this plan or the spec. Where the landed code and the spec disagree about a fact a document states, the document states what the code does, the report records the difference with both quotations, and the task carries on. It returns NEEDS_CONTEXT only if the difference is a number, a label or a file format that a user sees.
+- **Who runs the gates.** A `Mode: code` task of this plan does not run the three gates: it runs only what its change touches (for RA to RE their own checks, since they add no test file; for RH its own test file). The gate-runner runs the gates at landing. The `Mode: serial` tasks (RF, RG) run the commands their documents quote, and the gate-runner follows.
 - **No finding, task or review ids in documents** (README, CONTRIBUTING, AGENTS.md, templates). Anti-patterns are written in words.
 - **No Dependabot and no scheduled run at opening.** Decided: dependencies are pinned exactly, and both are added later only if they earn their keep (see "What stays open"). There is no CD: nothing is published in v0.1, so there is no deployment, no release job and no secret.
 - **Checks that are not tests.** A document is checked by its reviewer against the spec and the landed code, not by a test that pins its wording. The one test of this plan (task RH) compares two documents' commands and fails when they drift.
@@ -40,7 +41,7 @@ The first plan's "Left for the second plan" gives the README and AGENTS.md in fu
 |---|---|---|---|
 | 1 | RA, RB | A landed | `.github/workflows/gates.yml`, pull request template |
 | 2 | RC, RD | A landed | issue templates; wave 2 only caps this plan at two code tasks at once |
-| 3 | RE | A landed | `CONTRIBUTING.md` |
+| 3 | RE | A landed | `CONTRIBUTING.md`; after RA to RD, whose files it points at |
 | 4 | RF | AD landed, RE landed | serial; `README.md` |
 | 5 | RG | RF landed | serial; `AGENTS.md` |
 | 6 | RH | RG landed | the workflow-matches-documented-gates test |
@@ -115,7 +116,7 @@ A `concurrency` group on workflow and ref with `cancel-in-progress: true` is all
 
 **CONTRIBUTING.md (task RE)** has these sections: what the project is in one sentence; setup (Python 3.13, a virtual environment, `python -m pip install -e .[dev]`); the gates (the three commands, their order, that the third reads tracked files so new files are staged first); the commit format (`type(scope): summary`, a body that explains the problem, the change, why this design and which tests pin it, one concern per commit, no ids, no attribution trailer); the test rules of spec 8.1 in short; how a change to behaviour starts (the spec is the authority, a departure from it is made by changing the spec in a commit of its own with the reason, a parked feature returns only through its truth tests); the pull request (the template, the gates quoted, what was not run); a line that CI runs the three gates on Windows and Linux for every pull request and on `main`, and that nothing is published so there is no release process yet; a pointer to AGENTS.md for the rules an agent or model follows.
 
-**README.md (task RF)** has: what Eulerase is, in the spec's words for section 1, with the three claims kept apart; the boundary (spec 1.1); install from a clone (nothing is published) and the gates; the command line, with each option group, the exit statuses (0, 1, 2) and the examples; the limits table (spec 6.4); what it does not do; what a multiplicity is and the A3 statements about the filters; the statement of the ORF rule (the sentence `orfs.orf_rule_text()` returns) and what the `orfs` column counts; the sentence that the GenBank writer sets its date field to a fixed value, `01-JAN-1980`, so files are byte-identical across runs; the determinism promise in one short paragraph (spec 6.3: text outputs identical; figure data reproducible; image bytes not promised); the licence; a "Status" section saying the window and the Windows executable are not built yet and that the command prints `The window is not built yet; give --seq, --kmers or --file.` when given no input.
+**README.md (task RF)** has: what Eulerase is, in the spec's words for section 1, with the three claims kept apart; the boundary (spec 1.1); install from a clone (nothing is published) and the gates; the command line, with each option group, the exit statuses (0, 1, 2) and the examples; the limits table (spec 6.4: three limits, the k-mer limit, the drawing limit and the table-row limit, each with what happens above it; the minimum ORF length and the default k are not limits and are stated where the ORF rule and the default k are given); what it does not do; what a multiplicity is and the A3 statements about the filters; the statement of the ORF rule (the sentence `orfs.orf_rule_text()` returns) and what the `orfs` column counts; the sentence that the GenBank writer sets its date field to a fixed value, `01-JAN-1980`, so files are byte-identical across runs; the determinism promise in one short paragraph (spec 6.3: text outputs identical; figure data reproducible; image bytes not promised); the licence; a "Status" section saying the window and the Windows executable are not built yet and that the command prints `The window is not built yet; give --seq, --kmers or --file.` when given no input.
 
 **Facts RF reads from the landed code** (each quoted in the report with the command that produced it): the output of `eulerase --help`; the values of `eulerase.kmers.MAX_KMERS`, `eulerase.render.MAX_DRAW_NODES`, `eulerase.analysis.MAX_TABLE_ROWS`, `eulerase.orfs.MIN_ORF_AA`, `eulerase.analysis.DEFAULT_K`; `eulerase.orfs.orf_rule_text()`; the Contigs table columns from `eulerase.analysis.columns("Contigs")` and how `orfs` is computed; the date literal in `eulerase.io`; and every `main([...])` invocation in `tests/test_cli*.py` (the only examples the README may use).
 
@@ -142,7 +143,7 @@ Behaviour: every pull request and every push to `main` runs the three gates, in 
 - [ ] **Step 1: Write the workflow** exactly as "The workflow (task RA)" of Frozen interfaces says: trigger, permissions, one matrix job, the four single-line `run:` lines in order, no `defaults:` or `shell:` key. Comments: one line that a green run means the same as a green local run, one line that there is no CD because nothing is published in v0.1.
 - [ ] **Step 2: Pins.** Look for a full commit SHA of each action in files of the repository that already hold one (grep `.github/` and `docs/`). If you cannot verify a SHA offline, use `actions/checkout@v4` and `actions/setup-python@v5` and say in the report that the major-tag pin is a known weakness to be raised when the owner chooses to add automated updates. Do not invent a SHA.
 - [ ] **Step 3: Check offline.** Quote: the four `run:` lines (`grep -n "run:" .github/workflows/gates.yml` prints exactly four lines, each with a value on the same line); that no `run:` value is a block (`grep -n "run: [|>]"` prints nothing); that the file has no `defaults:`, `shell:`, `continue-on-error` or `if:` key (`grep -n -E "defaults:|shell:|continue-on-error|if:"` prints nothing); that the two setup-python cache inputs are present (`grep -n -E "cache: pip|cache-dependency-path: pyproject.toml"` prints two lines); that the file parses as YAML if a parser is installed (`python -c "import yaml"` may be absent; if so say "not parsed" and do not install one). Say that no run on a hosted runner was made.
-- [ ] **Step 4: Gates, then commit** with the subject in Frozen interfaces. Stage the file by name first.
+- [ ] **Step 4: Commit** with the subject in Frozen interfaces. Stage the file by name first. This is a `Mode: code` task: it does not run the three gates (it adds no test file; its own checks are Steps 1 to 3); the gate-runner runs them at landing.
 
 Sweep terms: none.
 
@@ -154,7 +155,7 @@ Behaviour: a pull request states what changed and why, how it was checked with t
 
 - [ ] **Step 1: Write the template** as "Pull request template (task RB)" of Frozen interfaces says. It names no task, finding or plan.
 - [ ] **Step 2: Check** that the three gate lines carry exactly the commands of the Gates block (copy them from the Gates block of Frozen interfaces) and that the file holds no path outside the repository. Quote the file's headings (`grep -n "^## "`).
-- [ ] **Step 3: Gates, then commit** with the subject in Frozen interfaces.
+- [ ] **Step 3: Commit** with the subject in Frozen interfaces. The three gates are not run here (no test file is added; Step 2 is the task's check); the gate-runner runs them at landing.
 
 Sweep terms: none.
 
@@ -166,7 +167,7 @@ Behaviour: a bug report holds what a maintainer needs to reproduce it with no fu
 
 - [ ] **Step 1: Write the template** as "Issue templates (tasks RC, RD)" of Frozen interfaces says (front matter `name: Bug report`, `about`, `title: "bug: "`, no labels since none exist at opening).
 - [ ] **Step 2: Check** that the version command it gives runs and prints the version (run it, quote the line), and that front matter parses as `---` delimited lines with the three keys.
-- [ ] **Step 3: Gates, then commit** with the subject in Frozen interfaces.
+- [ ] **Step 3: Commit** with the subject in Frozen interfaces. The three gates are not run here (no test file is added; Step 2 is the task's check); the gate-runner runs them at landing.
 
 Sweep terms: none.
 
@@ -178,20 +179,20 @@ Behaviour: a feature request starts from a problem, sends the reporter to the ta
 
 - [ ] **Step 1: Write the template** as "Issue templates (tasks RC, RD)" of Frozen interfaces says (front matter `name: Feature request`, `about`, `title: "feature: "`). Read spec section 3 and section 8.3 and name the parked features by their spec names (the automatic error model, contig binning, comparison of contigs with a reference), the dropped ones by section, and the truth tests by section number; do not restate the tests.
 - [ ] **Step 2: Check** that every spec path and section number it cites exists (`grep -n "^## 3\.\|^### 8\.3" docs/superpowers/specs/*.md`), quoting the output.
-- [ ] **Step 3: Gates, then commit** with the subject in Frozen interfaces.
+- [ ] **Step 3: Commit** with the subject in Frozen interfaces. The three gates are not run here (no test file is added; Step 2 is the task's check); the gate-runner runs them at landing.
 
 Sweep terms: none.
 
 ### Task RE: CONTRIBUTING
 
-Wave: 3 · Touches: CONTRIBUTING.md · After: RB · Mode: code
+Wave: 3 · Touches: CONTRIBUTING.md · After: RA, RB, RC, RD · Mode: code
 
 Behaviour: a contributor can set up, run the gates, write a commit and open a pull request from this file alone, and knows that a change to behaviour starts with the spec. Spec 9 (CONTRIBUTING), 8.1, 12.1.
 
 - [ ] **Step 1: Read** the repository's `AGENTS.md` (the minimal one from the first plan's task A), `pyproject.toml` and `tools/check_fresh_export.py` for the commands and the dev dependency group. The commands in the file are the ones the workflow and AGENTS.md carry.
 - [ ] **Step 2: Write** `CONTRIBUTING.md` as "CONTRIBUTING.md (task RE)" of Frozen interfaces says. It points at the pull request template and the two issue templates by path. It says nothing about the window, the executable or a release.
-- [ ] **Step 3: Check.** Run the setup commands it gives in a scratch virtual environment outside the repository if one can be made without network access; if not, say "setup not run" and do not claim it works. Run the three gate commands it gives and quote their last lines.
-- [ ] **Step 4: Gates, then commit** with the subject in Frozen interfaces.
+- [ ] **Step 3: Check.** Run the setup commands it gives in a scratch virtual environment outside the repository if one can be made without network access; if not, say "setup not run" and do not claim it works. Check that the three gate commands it gives equal the Gates block of Frozen interfaces (`diff`, quote the empty output). This is a `Mode: code` task: it does not run the gates; the gate-runner runs them at landing.
+- [ ] **Step 4: Commit** with the subject in Frozen interfaces.
 
 Sweep terms: none.
 
@@ -203,10 +204,10 @@ Behaviour: a reader learns what Eulerase is, what it does not do, how to install
 
 - [ ] **Step 1: Read the facts** listed under "Facts RF reads from the landed code" in Frozen interfaces, by running the commands named there, and keep the output for the report. Read the current `README.md` and keep its install and gate lines.
 - [ ] **Step 2: Choose the examples.** List every `main([...])` call in `tests/test_cli*.py` that a reader would recognise as a use (a typed sequence, a set of k-mers, a file, `--metrics`, `--both-strands`, `--csv`, `--gfa`, a failure with exit 1 or 2). The README uses only these, one per kind that exists. A kind with no test is left out and named in the report; do not add a test in this task.
-- [ ] **Step 3: Write `README.md`** as "README.md (task RF)" of Frozen interfaces says. The limits table has the five values read in Step 1, each with what happens above it (spec 6.4: refused before any work with the limit in the message; the figure says why it is empty; a cut table says how many rows of how many; an export always carries every row). If the first k-mer limit differs from 500,000, the README states the value in the code. The A3 statements about `--min-count` and `--clip-tips` use the help text's meaning, not new claims. No screenshot, no link to an image, no claim about speed, size or platforms tested.
-- [ ] **Step 4: Run every example command** of the README from the repository root (headless, `MPLBACKEND=Agg`; any file it writes goes to a scratch directory, never into the repository), compare its output with the lines the README shows, and quote each command and its output in the report. The README shows output exactly as the command printed it. Run every exit-status claim the same way. Mark any command not run.
+- [ ] **Step 3: Write `README.md`** as "README.md (task RF)" of Frozen interfaces says. The limits table has the three limits read in Step 1 (`MAX_KMERS`, `MAX_DRAW_NODES`, `MAX_TABLE_ROWS`), each with what happens above it (spec 6.4: refused before any work with the limit in the message; the figure says why it is empty; a cut table says how many rows of how many; an export always carries every row). `MIN_ORF_AA` is stated beside the ORF rule and `DEFAULT_K` beside the default k, not in the table. If the first k-mer limit differs from 500,000, the README states the value in the code. The A3 statements about `--min-count` and `--clip-tips` use the help text's meaning, not new claims. No screenshot, no link to an image, no claim about speed, size or platforms tested.
+- [ ] **Step 4: Run every example command** of the README from the repository root. The README shows the installed command `eulerase`; run it as that if the console script is on the PATH, otherwise as `python -c "from eulerase.cli import main; raise SystemExit(main([...]))"` with the same arguments, and say in the report which form was used (headless, `MPLBACKEND=Agg`; any file it writes goes to a scratch directory, never into the repository), compare its output with the lines the README shows, and quote each command and its output in the report. The README shows output exactly as the command printed it. Run every exit-status claim the same way. Mark any command not run.
 - [ ] **Step 5: Check the claims.** For each sentence that states a number, a rule or an option, quote the line of code, help text or test that makes it true, in a table in the report (sentence, source). A sentence without a source is removed.
-- [ ] **Step 6: Gates, then commit** with the subject in Frozen interfaces.
+- [ ] **Step 6: Run the commands the README quotes, then commit.** This is a `Mode: serial` task: run the install line and the three gate commands as the README gives them, in order, and quote the last line of each; then commit with the subject in Frozen interfaces. The gate-runner follows at that HEAD.
 
 Sweep terms: "coverage", "depth", the to-do markers of the leftover sweep, "screenshot", the first plan's task ids; none may appear in the file.
 
@@ -220,7 +221,7 @@ Behaviour: any agent or model that picks the work up finds the document roles, t
 - [ ] **Step 2: Write `AGENTS.md`** as "AGENTS.md (task RG)" of Frozen interfaces says. The invariants are copied from spec section 9 word for word and numbered 1 to 10. Where an invariant cites a spec section, the section number stays. The `## Gates` block is the fenced `gates` block of Frozen interfaces, copied unchanged.
 - [ ] **Step 3: Check the invariants** by a diff of the ten items against the spec text (extract both, compare with `diff`), quoting the empty output; and the gates block against the Gates block of Frozen interfaces the same way.
 - [ ] **Step 4: Check the layout facts** it states (source layout, test layout, tools) against `git ls-files`, quoting the listing it used. It states no fact about files that do not exist.
-- [ ] **Step 5: Gates, then commit** with the subject in Frozen interfaces.
+- [ ] **Step 5: Run the commands the document quotes, then commit.** This is a `Mode: serial` task: run the three gate commands of the `## Gates` block, in order, and quote the last line of each; then commit with the subject in Frozen interfaces. The gate-runner follows at that HEAD.
 
 Sweep terms: "coverage" (allowed only inside the anti-pattern that bans it), the first plan's task ids, finding ids.
 
@@ -233,7 +234,7 @@ Behaviour: the gate commands CI runs equal the gate commands the repository docu
 - [ ] **Step 1: Write the tests** in `tests/test_ci_gates.py`, with three helpers in the same file (the third is named below): `documented_gates(agents_text: str) -> list[str]` (the `run:` values of the fenced block whose info string is `gates` in `AGENTS.md`) and `workflow_runs(workflow_text: str) -> list[str]` (the values of every `run:` line of `.github/workflows/gates.yml`; the frozen workflow has no `defaults:` key, so every `run:` line is a step's command; raises `AssertionError` on a `run:` whose value is `|`, `>` or empty, so a block cannot hide a command). Both files are read with `Path.read_text(encoding="utf-8")`, never as bytes, and every line and value is compared after `strip()`, so a CRLF checkout on Windows leaves no `\r` on a value. Tests: `test_workflow_runs_the_documented_gates_in_order` (read both files from the repository root through `Path(__file__).resolve().parents[1]`; the workflow's runs after its first one, the install line, equal the documented list; the install line starts with `python -m pip install`; the list has at least the three gates; `workflow_flaws(workflow_text) == []`, a third helper that lists a `continue-on-error` line, an `if:` line, and a missing `windows-latest` or `ubuntu-latest`, so a gate that cannot fail or a matrix that lost a system is a red); `test_oracle_rejects_a_drifted_workflow` (parametrized over a workflow text with one gate removed, two gates swapped, one flag changed, an extra `run:` line between the gates, a `run: |` block, a `continue-on-error: true` line and a missing matrix system: each is reported as different, flawed or raises; the real text is the control).
 - [ ] **Step 2: Red.** Show the test fails on drift without touching tracked files: copy `.github/workflows/gates.yml` and `AGENTS.md` into a scratch directory, change one flag in the copy of the workflow, run the two helpers on the copies (a short `python -c` over the helpers imported from the test file) and quote that they differ. Then the control: on the real files they are equal.
 - [ ] **Step 3: Green.** Run `python -m pytest tests/test_ci_gates.py -q -p no:cacheprovider` and quote the last line. The file must also pass under the third gate (it reads only tracked files).
-- [ ] **Step 4: Gates, then commit** with the subject in Frozen interfaces. The body says the test compares the workflow with the documented gates and that it does not check what the gates do.
+- [ ] **Step 4: Commit** with the subject in Frozen interfaces. This is a `Mode: code` task: it runs its own test file (Step 3), not the three gates; the gate-runner runs them at landing, and the file must pass under the third gate. The body says the test compares the workflow with the documented gates and that it does not check what the gates do.
 
 Sweep terms: none.
 
