@@ -47,26 +47,9 @@ The first plan's "Left for the second plan" gives the README and AGENTS.md in fu
 
 Agent budget. The ceiling for both plans together is 12 agents, counted as 3 per code task in flight (the task, its nested gate-runner, its reviewer). This plan's code tasks run at most two at a time, so it adds at most 6 agents (waves 1 and 2); wave 3 adds 3, waves 4 and 5 add 1 (serial tasks), wave 6 adds 3. The controller dispatches a task of this plan only when the count of both plans stays at 12 or below. It never starts one while the first plan's waves 6, 7 or 8 (four code tasks, 12 agents) run, and while the first plan's wave 3 (three tasks, 9 agents) runs it starts at most one. A task that could not start before the first plan's wave 6 waits for its wave 9. The first plan's tasks never wait for this plan.
 
-Landing order: by wave, in id order within a wave (RA, RB, RC, RD, RE, RF, RG, RH). Landings are one at a time on `main`, interleaved with the first plan's landings at whatever point they happen: the controller applies the patch, stages the task's files by name, runs the three gates in the order of the block below, commits with the task's subject and dispatches a gate-runner at that HEAD before the next landing. The tasks of this plan touch no file the first plan's tasks touch before RF, so no conflict is expected; any conflict returns NEEDS_CONTEXT.
+Landing order: by wave, in id order within a wave (RA, RB, RC, RD, RE, RF, RG, RH). Landings are one at a time on `main`, interleaved with the first plan's landings at whatever point they happen: the controller applies the patch, stages the task's files by name, runs the three gates in the order of the Gates block of Frozen interfaces, commits with the task's subject and dispatches a gate-runner at that HEAD before the next landing. The tasks of this plan touch no file the first plan's tasks touch before RF, so no conflict is expected; any conflict returns NEEDS_CONTEXT.
 
-Gates block for the controller's gate list (the same three as the first plan; the third is added when the first plan's task A lands):
-
-```gates
-- name: pytest
-  run: python -m pytest -q -p no:cacheprovider
-  pass: exit 0
-  quote: last line
-- name: ruff
-  run: python -m ruff check .
-  pass: exit 0
-  quote: last line
-- name: fresh-export
-  run: python tools/check_fresh_export.py
-  pass: exit 0
-  quote: last line
-```
-
-The third gate reads tracked files from the working tree: a new file must be staged by name before it runs, or the export lacks it. A document-only task still runs all three.
+The Gates block (the same three gates as the first plan; the third is added when the first plan's task A lands) is in "Frozen interfaces" below, so every task brief holds it. It is the controller's gate list for the gate-runner.
 
 After RH lands and every task of both plans is landed, the controller runs "Opening (controller)". No implementer pushes.
 
@@ -85,6 +68,25 @@ After RH lands and every task of both plans is landed, the controller runs "Open
 | RG | `AGENTS.md` | `docs(agents): complete the engineering rules` |
 | RH | `tests/test_ci_gates.py` | `test(ci): check the workflow runs the documented gates` |
 
+**The Gates block** (read by tasks RB, RG and RH, and by the controller for the gate-runner), exactly:
+
+```gates
+- name: pytest
+  run: python -m pytest -q -p no:cacheprovider
+  pass: exit 0
+  quote: last line
+- name: ruff
+  run: python -m ruff check .
+  pass: exit 0
+  quote: last line
+- name: fresh-export
+  run: python tools/check_fresh_export.py
+  pass: exit 0
+  quote: last line
+```
+
+The third gate reads tracked files from the working tree: a new file must be staged by name before it runs, or the export lacks it. A document-only task still passes through all three at landing.
+
 **The workflow (task RA).** One file, workflow name `Gates`. Trigger, exactly:
 
 ```yaml
@@ -94,10 +96,10 @@ on:
     branches: [main]
 ```
 
-`permissions: contents: read` at the top. One job with id `gates`, `name: gates (${{ matrix.os }})`, `runs-on: ${{ matrix.os }}`, `timeout-minutes: 20`, `strategy.fail-fast: false`, matrix `os: [windows-latest, ubuntu-latest]`. `defaults.run.shell: bash`, so the same lines run on both systems. Steps in order: `actions/checkout` with `persist-credentials: false`; `actions/setup-python` with `python-version: "3.13"` and pip caching keyed on `pyproject.toml`; then the install and the three gates, each a step with a **single-line** `run:` (no `|` or `>` block, so the lines can be compared). The `run:` lines, byte for byte and in this order:
+`permissions: contents: read` at the top. One job with id `gates`, `name: gates (${{ matrix.os }})`, `runs-on: ${{ matrix.os }}`, `timeout-minutes: 20`, `strategy.fail-fast: false`, matrix `os: [windows-latest, ubuntu-latest]`. No `defaults:` key and no `shell:` key: each step uses the runner's default shell (PowerShell on Windows, bash on Linux), because the install line and the three gate lines run unchanged under both (the extras are quoted, so neither shell treats `[dev]` as a pattern). Because no `run:` key has an empty value, every `run:` line of the file is a step's command. Steps in order: `actions/checkout` with `persist-credentials: false`; `actions/setup-python` with `python-version: "3.13"`, `cache: pip` and `cache-dependency-path: pyproject.toml` (the repository has no requirements file, so both inputs are needed); then the install and the three gates, each a step with a **single-line** `run:` (no `|` or `>` block, so the lines can be compared). No step has `continue-on-error` or an `if:`. The `run:` lines, byte for byte and in this order (the first is the install, not a gate):
 
 ```
-python -m pip install -e .[dev]
+python -m pip install -e ".[dev]"
 python -m pytest -q -p no:cacheprovider
 python -m ruff check .
 python tools/check_fresh_export.py
@@ -105,7 +107,7 @@ python tools/check_fresh_export.py
 
 A `concurrency` group on workflow and ref with `cancel-in-progress: true` is allowed. No `env:` value that hides a difference between the two systems (no forced encoding, no forced backend): a red on one system is a finding. No deployment, release or secret. Actions are pinned to a full commit SHA with the version in a comment if the implementer can verify the SHA offline from a file in the repository; otherwise to the major tag (`actions/checkout@v4`, `actions/setup-python@v5`), and the report says which and why. A one-line comment in the file says there is no CD because nothing is published in v0.1.
 
-**AGENTS.md gates block (task RG; read by task RH).** Under a heading `## Gates`, one fenced block whose info string is `gates`, with the same three items, in the same order, and the same keys as the Dispatch block above (`name`, `run`, `pass`, `quote`). Each `run:` value is on one line. This block is the repository's statement of the gate commands; the workflow must equal it.
+**AGENTS.md gates block (task RG; read by task RH).** Under a heading `## Gates`, one fenced block whose info string is `gates`, with the same three items, in the same order, and the same keys as the Gates block above (`name`, `run`, `pass`, `quote`), copied from it with `diff`. Each `run:` value is on one line. This block is the repository's statement of the gate commands; the workflow must equal it.
 
 **Pull request template (task RB).** Headings, in order: `## Summary` (what changed and why), `## How it was checked` (the head SHA, then one line per gate in the order above with its last output line quoted: pytest, ruff, fresh-export; and the CI run link once it is green), `## Not run` (anything not run or not checked, said plainly; "nothing" is allowed only if true). Comments in the file say: quote output, do not paraphrase it; a gate not run is listed under "Not run". No attribution line is asked for.
 
@@ -137,9 +139,9 @@ Wave: 1 · Touches: .github/workflows/gates.yml · After: none · Mode: code
 
 Behaviour: every pull request and every push to `main` runs the three gates, in the first plan's order, on `windows-latest` and `ubuntu-latest`, with Python 3.13. Spec 9 (Gates), 12 step 1. Shape only (never copy names or product text) from the author's other repository: a `Gates` workflow with `pull_request` and `push` to `main`, `permissions: contents: read`, a concurrency group, a job timeout, `persist-credentials: false`.
 
-- [ ] **Step 1: Write the workflow** exactly as "The workflow (task RA)" of Frozen interfaces says: trigger, permissions, one matrix job, the four single-line `run:` lines in order. Comments: one line that a green run means the same as a green local run, one line that there is no CD because nothing is published in v0.1.
+- [ ] **Step 1: Write the workflow** exactly as "The workflow (task RA)" of Frozen interfaces says: trigger, permissions, one matrix job, the four single-line `run:` lines in order, no `defaults:` or `shell:` key. Comments: one line that a green run means the same as a green local run, one line that there is no CD because nothing is published in v0.1.
 - [ ] **Step 2: Pins.** Look for a full commit SHA of each action in files of the repository that already hold one (grep `.github/` and `docs/`). If you cannot verify a SHA offline, use `actions/checkout@v4` and `actions/setup-python@v5` and say in the report that the major-tag pin is a known weakness to be raised when the owner chooses to add automated updates. Do not invent a SHA.
-- [ ] **Step 3: Check offline.** Quote: the four `run:` lines (`grep -n "run:" .github/workflows/gates.yml`); that no `run:` value is a block (`grep -n "run: [|>]"` prints nothing); that the file parses as YAML if a parser is installed (`python -c "import yaml"` may be absent; if so say "not parsed" and do not install one). Say that no run on a hosted runner was made.
+- [ ] **Step 3: Check offline.** Quote: the four `run:` lines (`grep -n "run:" .github/workflows/gates.yml` prints exactly four lines, each with a value on the same line); that no `run:` value is a block (`grep -n "run: [|>]"` prints nothing); that the file has no `defaults:`, `shell:`, `continue-on-error` or `if:` key (`grep -n -E "defaults:|shell:|continue-on-error|if:"` prints nothing); that the two setup-python cache inputs are present (`grep -n -E "cache: pip|cache-dependency-path: pyproject.toml"` prints two lines); that the file parses as YAML if a parser is installed (`python -c "import yaml"` may be absent; if so say "not parsed" and do not install one). Say that no run on a hosted runner was made.
 - [ ] **Step 4: Gates, then commit** with the subject in Frozen interfaces. Stage the file by name first.
 
 Sweep terms: none.
@@ -151,7 +153,7 @@ Wave: 1 · Touches: .github/PULL_REQUEST_TEMPLATE.md · After: none · Mode: cod
 Behaviour: a pull request states what changed and why, how it was checked with the gate output quoted, and what was not run (spec 8.1 "say what was run"; spec 12.1). Shape only from the author's other repository: a summary, a validation list with one line per gate, comments that tell the author what to quote.
 
 - [ ] **Step 1: Write the template** as "Pull request template (task RB)" of Frozen interfaces says. It names no task, finding or plan.
-- [ ] **Step 2: Check** that the three gate lines carry exactly the commands of the Gates block (copy them from the Dispatch block) and that the file holds no path outside the repository. Quote the file's headings (`grep -n "^## "`).
+- [ ] **Step 2: Check** that the three gate lines carry exactly the commands of the Gates block (copy them from the Gates block of Frozen interfaces) and that the file holds no path outside the repository. Quote the file's headings (`grep -n "^## "`).
 - [ ] **Step 3: Gates, then commit** with the subject in Frozen interfaces.
 
 Sweep terms: none.
@@ -215,8 +217,8 @@ Wave: 5 · Touches: AGENTS.md · After: RF · Mode: serial
 Behaviour: any agent or model that picks the work up finds the document roles, the setup, the gates, the commit and test rules, the anti-patterns, the rules of spec 12.1 and the ten invariants in the spec's words. The gates block is machine-read by the test of task RH. Spec 9 (AGENTS.md, Invariants), 12.1, 4. Replaces the minimal AGENTS.md of the first plan's task A.
 
 - [ ] **Step 1: Read** the current `AGENTS.md`, spec section 9 (the invariants), section 12.1 and section 4 (for the anti-patterns). Keep every commit and test rule the minimal file already states; do not weaken one.
-- [ ] **Step 2: Write `AGENTS.md`** as "AGENTS.md (task RG)" of Frozen interfaces says. The invariants are copied from spec section 9 word for word and numbered 1 to 10. Where an invariant cites a spec section, the section number stays. The `## Gates` block is the fenced `gates` block of the Dispatch section.
-- [ ] **Step 3: Check the invariants** by a diff of the ten items against the spec text (extract both, compare with `diff`), quoting the empty output; and the gates block against the Dispatch block of this plan the same way.
+- [ ] **Step 2: Write `AGENTS.md`** as "AGENTS.md (task RG)" of Frozen interfaces says. The invariants are copied from spec section 9 word for word and numbered 1 to 10. Where an invariant cites a spec section, the section number stays. The `## Gates` block is the fenced `gates` block of Frozen interfaces, copied unchanged.
+- [ ] **Step 3: Check the invariants** by a diff of the ten items against the spec text (extract both, compare with `diff`), quoting the empty output; and the gates block against the Gates block of Frozen interfaces the same way.
 - [ ] **Step 4: Check the layout facts** it states (source layout, test layout, tools) against `git ls-files`, quoting the listing it used. It states no fact about files that do not exist.
 - [ ] **Step 5: Gates, then commit** with the subject in Frozen interfaces.
 
@@ -228,7 +230,7 @@ Wave: 6 · Touches: tests/test_ci_gates.py · After: RG · Mode: code
 
 Behaviour: the gate commands CI runs equal the gate commands the repository documents, in the same order, so a change to one that forgets the other is a red. It compares two documents with each other; it does not pin wording. Spec 9 (Gates, "in CI and before a commit"), invariant 10.
 
-- [ ] **Step 1: Write the tests** in `tests/test_ci_gates.py`, with two helpers in the same file: `documented_gates(agents_text: str) -> list[str]` (the `run:` values of the fenced block whose info string is `gates` in `AGENTS.md`) and `workflow_runs(workflow_text: str) -> list[str]` (the values of every `run:` line of `.github/workflows/gates.yml`; raises `AssertionError` on a `run:` whose value is `|`, `>` or empty, so a block cannot hide a command). Tests: `test_workflow_runs_the_documented_gates_in_order` (read both files from the repository root through `Path(__file__).resolve().parents[1]`, UTF-8; the workflow's runs after its first one, the install line, equal the documented list; the install line starts with `python -m pip install`; the list has at least the three gates); `test_oracle_rejects_a_drifted_workflow` (parametrized over a workflow text with one gate removed, two gates swapped, one flag changed, an extra `run:` line between the gates, and a `run: |` block: each is reported as different or raises; the real text is the control).
+- [ ] **Step 1: Write the tests** in `tests/test_ci_gates.py`, with three helpers in the same file (the third is named below): `documented_gates(agents_text: str) -> list[str]` (the `run:` values of the fenced block whose info string is `gates` in `AGENTS.md`) and `workflow_runs(workflow_text: str) -> list[str]` (the values of every `run:` line of `.github/workflows/gates.yml`; the frozen workflow has no `defaults:` key, so every `run:` line is a step's command; raises `AssertionError` on a `run:` whose value is `|`, `>` or empty, so a block cannot hide a command). Both files are read with `Path.read_text(encoding="utf-8")`, never as bytes, and every line and value is compared after `strip()`, so a CRLF checkout on Windows leaves no `\r` on a value. Tests: `test_workflow_runs_the_documented_gates_in_order` (read both files from the repository root through `Path(__file__).resolve().parents[1]`; the workflow's runs after its first one, the install line, equal the documented list; the install line starts with `python -m pip install`; the list has at least the three gates; `workflow_flaws(workflow_text) == []`, a third helper that lists a `continue-on-error` line, an `if:` line, and a missing `windows-latest` or `ubuntu-latest`, so a gate that cannot fail or a matrix that lost a system is a red); `test_oracle_rejects_a_drifted_workflow` (parametrized over a workflow text with one gate removed, two gates swapped, one flag changed, an extra `run:` line between the gates, a `run: |` block, a `continue-on-error: true` line and a missing matrix system: each is reported as different, flawed or raises; the real text is the control).
 - [ ] **Step 2: Red.** Show the test fails on drift without touching tracked files: copy `.github/workflows/gates.yml` and `AGENTS.md` into a scratch directory, change one flag in the copy of the workflow, run the two helpers on the copies (a short `python -c` over the helpers imported from the test file) and quote that they differ. Then the control: on the real files they are equal.
 - [ ] **Step 3: Green.** Run `python -m pytest tests/test_ci_gates.py -q -p no:cacheprovider` and quote the last line. The file must also pass under the third gate (it reads only tracked files).
 - [ ] **Step 4: Gates, then commit** with the subject in Frozen interfaces. The body says the test compares the workflow with the documented gates and that it does not check what the gates do.
