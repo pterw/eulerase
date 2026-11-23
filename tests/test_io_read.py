@@ -9,6 +9,7 @@ from Bio.Seq import Seq
 from Bio.SeqRecord import SeqRecord
 from genomes import random_dna
 
+from eulerase import kmers
 from eulerase.errors import EuleraseError
 from eulerase.io import detect_format, read_records
 from eulerase.sequence import Record
@@ -181,9 +182,19 @@ def test_case_blank_lines_line_endings_and_wrapping_do_not_change_records(tmp_pa
     _assert_same_records(read_records(messy), read_records(clean))
 
 
-@pytest.mark.xfail(strict=True, reason="B2: file cut after the last whole record")
 def test_files_over_60000_bases_load_whole(tmp_path):
     written = [Record("big", random_dna(40_000, 4)), Record("more", random_dna(30_000, 5))]
     path = tmp_path / "long.fa"
     path.write_text(_bio_text(written, "fasta"))
     _assert_same_records(read_records(path), written)
+
+
+def test_a_file_over_the_limit_is_refused_with_the_limit_named(tmp_path, monkeypatch):
+    written = [Record("big", random_dna(40_000, 6)), Record("more", random_dna(30_000, 7))]
+    path = tmp_path / "long.fa"
+    path.write_text(_bio_text(written, "fasta"))
+    monkeypatch.setattr(kmers, "MAX_KMERS", 50_000)
+    got = read_records(path)
+    _assert_same_records(got, written)
+    with pytest.raises(EuleraseError, match="50,000"):
+        kmers.from_sequences(got, 3, both_strands=False, unique=False)

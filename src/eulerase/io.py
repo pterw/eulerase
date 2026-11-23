@@ -11,8 +11,6 @@ from Bio import SeqIO
 from eulerase.errors import EuleraseError
 from eulerase.sequence import Record, parse_records
 
-MAX_LOAD_CHARS = 60_000
-
 _GZIP_MAGIC = b"\x1f\x8b"
 _BOM = "\ufeff"
 _FIRST_LINE_FORMATS = (("LOCUS", "genbank"), ("ID ", "embl"), (">", "fasta"), ("@", "fastq"))
@@ -74,16 +72,6 @@ def read_records(path: str | os.PathLike) -> list[Record]:
                 f"The file '{name}' could not be read as {fmt.upper()}; "
                 "check that it is a valid file."
             ) from None
-    records: list[Record] = []
-    total = 0
-    for rec in found:
-        if total + len(rec.sequence) > MAX_LOAD_CHARS:
-            break
-        records.append(rec)
-        total += len(rec.sequence)
-    if not records:
-        raise EuleraseError(
-            f"No usable {fmt.upper()} records found in '{name}' "
-            f"(or the first one exceeds {MAX_LOAD_CHARS:,} bases)."
-        )
-    return records
+    if not found:
+        raise EuleraseError(f"No usable {fmt.upper()} records found in '{name}'.")
+    return found
