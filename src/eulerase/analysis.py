@@ -94,6 +94,122 @@ class Analysis:
     notes: tuple[str, ...]
 
 
+NOT_AVAILABLE = "not available"
+TABLES = ("Edges", "Nodes", "Trails", "Contigs", "Assembly")
+
+
+def format_cell(value: object) -> str:
+    """The one number format: digits for int, 4 decimals for float, yes/no for bool."""
+    if isinstance(value, bool):  # before int: a bool is an int
+        return _yes_no(value)
+    if value is None:
+        return NOT_AVAILABLE
+    if isinstance(value, float):
+        return f"{value:.4f}"
+    return str(value)
+
+
+def _contig_items(a: Analysis) -> list[tuple[Contig, int | None]]:
+    counts = [None] * len(a.contigs) if a.orfs is None else [len(o) for o in a.orfs]
+    return list(zip(a.contigs, counts, strict=True))
+
+
+def _assembly_items(a: Analysis) -> list[tuple[str, object]]:
+    m = a.metrics
+    rule = NOT_AVAILABLE if a.orfs is None else orfs.orf_rule_text()
+    return [
+        ("contigs", m.contigs),
+        ("total length", m.total_length),
+        ("longest", m.longest),
+        ("shortest", m.shortest),
+        ("mean length", m.mean_length),
+        ("n50", m.n50),
+        ("l50", m.l50),
+        ("n90", m.n90),
+        ("gc", m.gc),
+        ("mean multiplicity", m.mean_multiplicity),
+        ("distinct k-mers", a.distinct_kmers),
+        ("total k-mers", a.total_kmers),
+        ("removed k-mers", a.removed_kmers),
+        ("clipped branches", a.clipped_branches),
+        ("clipped k-mers", a.clipped_kmers),
+        ("settings", settings_text(a.settings)),
+        ("orf rule", rule),
+    ]
+
+
+# One definition per table: how to list its items from an Analysis, and (header, getter) pairs.
+_TABLE_DEFS = {
+    "Edges": (
+        lambda a: [s for trail in a.trails for s in trail],
+        (
+            ("trail", lambda s: s.trail),
+            ("step", lambda s: s.step),
+            ("global step", lambda s: s.global_step),
+            ("k-mer", lambda s: s.kmer),
+            ("from", lambda s: s.source),
+            ("to", lambda s: s.target),
+            ("times seen", lambda s: s.multiplicity),
+        ),
+    ),
+    "Nodes": (
+        lambda a: a.nodes,
+        (
+            ("node", lambda n: n.node),
+            ("in", lambda n: n.in_degree),
+            ("out", lambda n: n.out_degree),
+            ("balance", lambda n: n.balance),
+            ("role", lambda n: n.role),
+        ),
+    ),
+    "Trails": (
+        lambda a: list(enumerate(zip(a.trails, a.spelled, strict=True), 1)),
+        (
+            ("trail", lambda t: t[0]),
+            ("edges", lambda t: len(t[1][0])),
+            ("sequence", lambda t: t[1][1]),
+        ),
+    ),
+    "Contigs": (
+        _contig_items,
+        (
+            ("contig", lambda t: t[0].id),
+            ("length", lambda t: t[0].length),
+            ("edges", lambda t: t[0].edges),
+            ("k-mer count", lambda t: t[0].kmer_count),
+            ("mean multiplicity", lambda t: t[0].mean_multiplicity),
+            ("min multiplicity", lambda t: t[0].min_multiplicity),
+            ("gc", lambda t: t[0].gc),
+            ("orfs", lambda t: t[1]),
+            ("circular", lambda t: t[0].circular),
+            ("has n", lambda t: t[0].has_n),
+            ("strand", lambda t: t[0].strand),
+        ),
+    ),
+    "Assembly": (
+        _assembly_items,
+        (("measure", lambda t: t[0]), ("value", lambda t: t[1])),
+    ),
+}
+
+
+def columns(table: str) -> tuple[str, ...]:
+    return tuple(header for header, _ in _TABLE_DEFS[table][1])
+
+
+def rows(a: Analysis, table: str) -> list[tuple[str, ...]]:
+    """Every row of a table, every cell already formatted; nothing is cut."""
+    items, cells = _TABLE_DEFS[table]
+    return [tuple(format_cell(get(item)) for _, get in cells) for item in items(a)]
+
+
+def limit_rows(rows: Sequence[tuple[str, ...]]) -> tuple[list[tuple[str, ...]], str | None]:
+    """The first MAX_TABLE_ROWS rows for display, and a note when some were cut."""
+    if len(rows) <= MAX_TABLE_ROWS:
+        return list(rows), None
+    return list(rows[:MAX_TABLE_ROWS]), f"Showing {MAX_TABLE_ROWS} of {len(rows)} rows."
+
+
 def _steps(g, trails: list[graph.Trail], counts: dict[str, int]) -> tuple[tuple[Step, ...], ...]:
     out: list[tuple[Step, ...]] = []
     global_step = 0
