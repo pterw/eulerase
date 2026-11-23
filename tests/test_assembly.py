@@ -1,10 +1,15 @@
 """Tests for the assembly graph, contigs, metrics and the k-mer spectrum."""
 
+import json
+import os
 import statistics
+import subprocess
+import sys
 from collections import Counter
+from pathlib import Path
 
 import pytest
-from genomes import brute_kmers, random_dna, revcomp
+from genomes import brute_kmers, child_env, random_dna, revcomp
 
 from eulerase.assembly import (
     assembly_metrics,
@@ -194,18 +199,71 @@ def test_worked_case_repeat_inside_one_sequence():
     assert contigs[0].length < len(read)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    raises=AssertionError,
-    reason="R1: contigs of equal length are numbered in the order the reads came in",
-)
 def test_contigs_are_numbered_in_a_stable_order():
+    # Reads ACGTTGCACCATGGATCC and ACGTTGCAGGTACCTAGG at k=3 hold 24 distinct 3-mers.
+    # The 2-mers CG, TT, GC, TC, CT and GA each have one edge in and one out, so they join
+    # their neighbours: ACG+CGT = ACGT, GTT+TTG = GTTG, TGC+GCA = TGCA, ATC+TCC = ATCC,
+    # CCT+CTA = CCTA, GGA+GAT = GGAT (six contigs of length 4). Every other 2-mer branches,
+    # so the remaining 12 3-mers are contigs of length 3. Longest first, ties by sequence,
+    # ids from 1, whatever the read order.
+    expected = [
+        (1, 4, "ACGT"),
+        (2, 4, "ATCC"),
+        (3, 4, "CCTA"),
+        (4, 4, "GGAT"),
+        (5, 4, "GTTG"),
+        (6, 4, "TGCA"),
+        (7, 3, "ACC"),
+        (8, 3, "AGG"),
+        (9, 3, "ATG"),
+        (10, 3, "CAC"),
+        (11, 3, "CAG"),
+        (12, 3, "CAT"),
+        (13, 3, "CCA"),
+        (14, 3, "GGT"),
+        (15, 3, "GTA"),
+        (16, 3, "TAC"),
+        (17, 3, "TAG"),
+        (18, 3, "TGG"),
+    ]
     reads = ["ACGTTGCACCATGGATCC", "ACGTTGCAGGTACCTAGG"]
     for order in (reads, reads[::-1]):
-        counts = dict(Counter(brute_kmers(order, 3, False)))
+        counts = dict(Counter(brute_kmers(order, 3, False)))  # insertion order follows the reads
         got = extract_contigs(build_assembly_graph(counts), 3, both_strands=False)
-        sequences = sorted({c.sequence for c in got}, key=lambda s: (-len(s), s))
-        assert [(c.id, c.sequence) for c in got] == list(enumerate(sequences, 1))
+        assert [(c.id, c.length, c.sequence) for c in got] == expected
+
+
+_CYCLES_CHILD = """
+import json
+from collections import Counter
+from genomes import brute_kmers
+from eulerase.assembly import build_assembly_graph, extract_contigs
+
+counts = dict(Counter(brute_kmers(["ACGTACGT", "AACCAACC"], 4, False)))
+got = extract_contigs(build_assembly_graph(counts), 4, both_strands=False)
+print(json.dumps([(c.id, c.length, c.sequence) for c in got]))
+"""
+
+
+def test_equal_cycles_are_numbered_the_same_in_two_processes():
+    # Each read is a 4-edge cycle spelled from its smallest node: ACG gives ACGTACG and
+    # AACC's smallest node AAC gives AACCAAC; both have length 7, so the tie goes by
+    # sequence: AACCAAC is contig 1. Seeds 1 and 4 gave opposite orders before the fix.
+    expected = [(1, 7, "AACCAAC"), (2, 7, "ACGTACG")]
+    for seed in ("1", "4"):
+        env = child_env() | {
+            "PYTHONHASHSEED": seed,
+            "PYTHONPATH": os.pathsep.join([child_env()["PYTHONPATH"], str(Path(__file__).parent)]),
+        }
+        done = subprocess.run(
+            [sys.executable, "-c", _CYCLES_CHILD],
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=60,
+            check=True,
+        )
+        assert [tuple(row) for row in json.loads(done.stdout)] == expected
 
 
 @pytest.mark.xfail(

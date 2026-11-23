@@ -260,7 +260,7 @@ def extract_contigs(ag: nx.DiGraph, k: int, *, both_strands: bool) -> tuple[Cont
     contigs = _open_contigs(ag, strand, used_edges) + _cyclic_contigs(ag, strand, used_edges)
     if both_strands:
         contigs = _drop_reverse_complement_twins(contigs)
-    contigs.sort(key=lambda c: -c.length)
+    contigs.sort(key=lambda c: (-c.length, c.sequence))
     return tuple(replace(c, id=i) for i, c in enumerate(contigs, 1))
 
 
