@@ -4,7 +4,6 @@ import re
 from dataclasses import dataclass
 
 from Bio.Seq import Seq
-from Bio.SeqUtils import gc_fraction
 
 from eulerase.errors import EuleraseError
 
@@ -57,13 +56,12 @@ def is_dna(sequence: str) -> bool:
 
 
 def gc_content(sequence: str) -> float | None:
-    """GC fraction of a sequence via Biopython (carried body; see the B6 tests)."""
-    if not sequence:
-        return 0.0
-    try:
-        return float(gc_fraction(Seq(sequence)))
-    except Exception:
-        return sum(1 for c in sequence.upper() if c in "GC") / len(sequence)
+    """(G + C) / (A + C + G + T), N left out; None unless DNA with a known base."""
+    if not is_dna(sequence):
+        return None
+    upper = sequence.upper()
+    known = sum(upper.count(base) for base in "ACGT")
+    return (upper.count("G") + upper.count("C")) / known if known else None
 
 
 def require_dna(items: list[str]) -> None:

@@ -5,6 +5,8 @@ import random
 import pytest
 from genomes import revcomp
 
+from eulerase.assembly import assembly_metrics, build_assembly_graph, extract_contigs
+from eulerase.kmers import count_kmers
 from eulerase.sequence import (
     Record,
     gc_content,
@@ -72,10 +74,6 @@ def test_is_dna_accepts_acgtn_only(sequence, expected):
     assert is_dna(sequence) is expected
 
 
-_NOT_FIXED = "B6: GC of NNNN is 0.0, not None"
-_DNA_ONLY = "B6: GC offered only for DNA"
-
-
 @pytest.mark.parametrize(
     ("sequence", "expected"),
     [
@@ -84,16 +82,39 @@ _DNA_ONLY = "B6: GC offered only for DNA"
         ("gcat", 0.5),
         ("GGCC", 1.0),
         ("GCNN", 1.0),
-        pytest.param("NNNN", None, marks=pytest.mark.xfail(strict=True, reason=_NOT_FIXED)),
-        pytest.param("LEMON", None, marks=pytest.mark.xfail(strict=True, reason=_DNA_ONLY)),
-        pytest.param("ACGU", None, marks=pytest.mark.xfail(strict=True, reason=_DNA_ONLY)),
+        ("ACG", 2 / 3),
+        ("GCNNA", 2 / 3),
+        ("NNNN", None),
+        ("", None),
+        ("LEMON", None),
+        ("ACGU", None),
     ],
 )
 def test_gc_content_cases(sequence, expected):
     assert gc_content(sequence) == expected
 
 
-def test_oracle_rejects_a_wrong_gc_content():
-    # Hand count: ACGT has 2 of 4 bases G or C; 3 of 4 would be wrong.
-    assert gc_content("ACGT") == 2 / 4
-    assert gc_content("ACGT") != 3 / 4
+def _hand_gc(sequence: str) -> float | None:
+    # Independent count of (G + C) / (A + C + G + T); None for non-DNA or no known base.
+    upper = sequence.upper()
+    if not upper or set(upper) - set("ACGTN"):
+        return None
+    known = sum(upper.count(base) for base in "ACGT")
+    return (upper.count("G") + upper.count("C")) / known if known else None
+
+
+@pytest.mark.parametrize(
+    ("sequence", "expected"),
+    [("GCNNA", 2 / 3), ("ACGTGC", 4 / 6), ("LEMONLEMONADE", None)],
+)
+def test_every_caller_gets_the_same_gc(sequence, expected):
+    counts = count_kmers([sequence[i : i + 3] for i in range(len(sequence) - 2)])
+    contigs = extract_contigs(build_assembly_graph(counts), 3, both_strands=False)
+    assert contigs
+    for contig in contigs:
+        assert contig.gc == assembly_metrics([contig]).gc == gc_content(contig.sequence)
+        assert contig.gc == _hand_gc(contig.sequence)
+    if len(contigs) == 1:
+        assert contigs[0].sequence == sequence and contigs[0].gc == expected
+    else:
+        assert expected is None
