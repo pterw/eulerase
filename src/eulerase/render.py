@@ -89,15 +89,27 @@ def _component_layout(sub: nx.MultiDiGraph) -> dict[str, tuple[float, float]]:
     return {k: ((x - min_x) / rx, (y - min_y) / ry) for k, (x, y) in pos.items()}
 
 
+def _ordered_subgraph(g: nx.MultiDiGraph, nodes: list[str]) -> nx.MultiDiGraph:
+    """The subgraph on `nodes` (already sorted), built so its node and edge order is fixed."""
+    sub = nx.MultiDiGraph()
+    sub.add_nodes_from(nodes)
+    for u in nodes:
+        sub.add_edges_from(g.out_edges(u, keys=True, data=True))
+    return sub
+
+
 def compute_layout(a: Analysis) -> dict[str, tuple[float, float]] | None:
     """Layout components in horizontal rows."""
     g = _walk_graph(a)
     if len(g) > MAX_DRAW_NODES:
         return None
-    comps = [
-        g.subgraph(c).copy()
-        for c in sorted(nx.weakly_connected_components(g), key=len, reverse=True)
-    ]
+    # A component is a set, so its iteration order follows string hashing: take every node and
+    # edge from the walk graph in sorted-node order, and order equal-size components by name.
+    ordered = sorted(
+        (sorted(c) for c in nx.weakly_connected_components(g)),
+        key=lambda nodes: (-len(nodes), nodes[0]),
+    )
+    comps = [_ordered_subgraph(g, nodes) for nodes in ordered]
     if not comps:
         return {}
     layouts = [_component_layout(c) for c in comps]
