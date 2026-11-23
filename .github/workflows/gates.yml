@@ -1,0 +1,47 @@
+# A green run here means the same as a green local run of the three gates.
+# There is no CD: nothing is published in v0.1.
+# Pull requests skip only documentation paths; pushes to main are never filtered.
+name: Gates
+
+on:
+  pull_request:
+    paths-ignore:
+      - docs/**/*.md
+      - CONTRIBUTING.md
+      - .github/ISSUE_TEMPLATE/*.md
+      - .github/PULL_REQUEST_TEMPLATE.md
+  push:
+    branches: [main]
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  gates:
+    name: gates (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+      - name: install
+        run: python -m pip install -e ".[dev]"
+      - name: pytest
+        run: python -m pytest -q -p no:cacheprovider
+      - name: ruff
+        run: python -m ruff check .
+      - name: fresh-export
+        run: python tools/check_fresh_export.py
