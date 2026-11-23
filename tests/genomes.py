@@ -9,7 +9,8 @@ _COMPLEMENT = str.maketrans("ACGTN", "TGCAN")
 
 
 def random_dna(n: int, seed: int) -> str:
-    return "".join(random.Random(seed).choice("ACGT") for _ in range(n))
+    rng = random.Random(seed)
+    return "".join(rng.choice("ACGT") for _ in range(n))
 
 
 def revcomp(s: str) -> str:
