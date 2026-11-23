@@ -1,0 +1,153 @@
+"""Reading sequence files: every format, plain or gzip, loads every record."""
+
+import gzip
+import io
+
+import pytest
+from Bio import SeqIO
+from Bio.Seq import Seq
+from Bio.SeqRecord import SeqRecord
+from genomes import random_dna
+
+from eulerase.errors import EuleraseError
+from eulerase.io import read_records
+from eulerase.sequence import Record
+
+_WRITTEN = [
+    Record("alpha", random_dna(90, 1)),
+    Record("beta", random_dna(47, 2)),
+    Record("gamma", random_dna(130, 3)),
+]
+
+
+def _bio_text(records, fmt):
+    out = io.StringIO()
+    for r in records:
+        rec = SeqRecord(Seq(r.sequence), id=r.name, name=r.name, description="")
+        if fmt == "fastq":
+            rec.letter_annotations["phred_quality"] = [30] * len(r.sequence)
+        elif fmt in ("genbank", "embl"):
+            rec.annotations["molecule_type"] = "DNA"
+        SeqIO.write(rec, out, fmt)
+    return out.getvalue()
+
+
+def _assert_same_records(got, expected):
+    assert [(r.name, r.sequence) for r in got] == [(r.name, r.sequence) for r in expected]
+
+
+@pytest.mark.parametrize("gz", [False, True], ids=["plain", "gzip"])
+@pytest.mark.parametrize(
+    ("fmt", "ext"),
+    [("fasta", ".fasta"), ("fastq", ".fq"), ("genbank", ".gb"), ("embl", ".embl")],
+)
+def test_each_format_loads_every_sequence(tmp_path, fmt, ext, gz):
+    path = tmp_path / ("reads" + ext + (".gz" if gz else ""))
+    text = _bio_text(_WRITTEN, fmt)
+    if gz:
+        path.write_bytes(gzip.compress(text.encode()))
+    else:
+        path.write_text(text)
+    _assert_same_records(read_records(path), _WRITTEN)
+
+
+def test_oracle_rejects_dropped_sequences():
+    emptied = [_WRITTEN[0], Record("beta", ""), _WRITTEN[2]]
+    with pytest.raises(AssertionError):
+        _assert_same_records(emptied, _WRITTEN)
+
+
+def test_missing_path_is_an_error_not_a_sequence(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    with pytest.raises(EuleraseError):
+        read_records("ACGT")
+
+
+def test_a_directory_is_an_error_not_an_oserror(tmp_path):
+    with pytest.raises(EuleraseError):
+        read_records(tmp_path)
+
+
+@pytest.mark.filterwarnings("ignore::Bio.BiopythonParserWarning")
+def test_biopython_failure_becomes_one_sentence(tmp_path):
+    path = tmp_path / "bad.gb"
+    path.write_text(
+        "LOCUS       X1                10 bp    DNA     linear   UNK 01-JAN-1980\n"
+        "FEATURES             Location/Qualifiers\n"
+        "     CDS             join(1..\n"
+        "ORIGIN\n"
+        "        1 acgtacgtac\n//\n"
+    )
+    with pytest.raises(EuleraseError) as caught:
+        read_records(path)
+    assert "\n" not in str(caught.value)
+    assert "Traceback" not in str(caught.value)
+
+
+_FA = ">r1\nACGTACGTAC\n>r2\nGGGTTTAAAC\n"
+_FA_SEQS = ["ACGTACGTAC", "GGGTTTAAAC"]
+_B9 = pytest.mark.xfail(strict=True, reason="B9: format guessed from the file name")
+
+
+@pytest.mark.parametrize(
+    ("name", "data", "expected"),
+    [
+        pytest.param("a.fa", b"\xef\xbb\xbf" + _FA.encode(), _FA_SEQS, marks=_B9, id="bom"),
+        pytest.param("a.txt", _FA.encode(), _FA_SEQS, id="fasta-named-txt"),
+        pytest.param(
+            "a.fa",
+            _bio_text([Record("q", "ACGTACGTAC")], "fastq").encode(),
+            ["ACGTACGTAC"],
+            marks=_B9,
+            id="fastq-named-fa",
+        ),
+        pytest.param("a.txt", b"ACGTACGTAC\nGGGTTTAAAC\n", _FA_SEQS, marks=_B9, id="bare"),
+        pytest.param("a.fa", b"", None, id="empty"),
+        pytest.param("reads.txt", gzip.compress(_FA.encode()), _FA_SEQS, marks=_B9, id="gz-txt"),
+        pytest.param("reads.gz", _FA.encode(), _FA_SEQS, marks=_B9, id="plain-gz"),
+    ],
+)
+def test_format_is_detected_from_content(tmp_path, name, data, expected):
+    path = tmp_path / name
+    path.write_bytes(data)
+    if expected is None:
+        with pytest.raises(EuleraseError):
+            read_records(path)
+    else:
+        assert [r.sequence for r in read_records(path)] == expected
+
+
+_GZ = gzip.compress(_bio_text(_WRITTEN, "fasta").encode())
+
+
+@pytest.mark.parametrize(
+    "data",
+    [_GZ[: len(_GZ) // 2], _GZ[:20] + b"\xff" * 8 + _GZ[28:]],
+    ids=["truncated", "damaged"],
+)
+def test_broken_gzip_is_an_error_not_a_crash(tmp_path, data):
+    path = tmp_path / "reads.fa.gz"
+    path.write_bytes(data)
+    with pytest.raises(EuleraseError) as caught:
+        read_records(path)
+    assert "\n" not in str(caught.value)
+
+
+def test_case_blank_lines_line_endings_and_wrapping_do_not_change_records(tmp_path):
+    clean = tmp_path / "clean.fa"
+    clean.write_text(_bio_text(_WRITTEN, "fasta"))
+    messy = tmp_path / "messy.fa"
+    lines = []
+    for r in _WRITTEN:
+        s = r.sequence.lower()
+        lines += [f">{r.name}", "", *(s[i : i + 17] for i in range(0, len(s), 17)), ""]
+    messy.write_bytes("\r\n".join(lines).encode())
+    _assert_same_records(read_records(messy), read_records(clean))
+
+
+@pytest.mark.xfail(strict=True, reason="B2: file cut after the last whole record")
+def test_files_over_60000_bases_load_whole(tmp_path):
+    written = [Record("big", random_dna(40_000, 4)), Record("more", random_dna(30_000, 5))]
+    path = tmp_path / "long.fa"
+    path.write_text(_bio_text(written, "fasta"))
+    _assert_same_records(read_records(path), written)
