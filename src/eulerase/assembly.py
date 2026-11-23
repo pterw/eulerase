@@ -160,16 +160,28 @@ def _strand_key(contig: Contig) -> str:
     return min(seq, reverse_complement(seq))
 
 
+def _is_own_twin(contig: Contig) -> bool:
+    """True when the contig is its own reverse complement (up to rotation if circular)."""
+    seq = contig.sequence
+    if contig.circular:
+        core = seq[: contig.edges]
+        return _least_rotation(core) == _least_rotation(reverse_complement(core))
+    return seq == reverse_complement(seq)
+
+
 def _drop_reverse_complement_twins(contigs: list[Contig]) -> list[Contig]:
-    """Keep one contig per strand pair: the lexicographically smaller strand.
-    A contig whose twin is absent (for example clipped) is kept as it is."""
-    best: dict[tuple[bool, str], Contig] = {}
+    """Keep one contig per strand pair, the lexicographically smaller strand, labelled
+    smaller-of-pair. A contig whose twin is absent (for example clipped) is kept as it is,
+    labelled unpaired, unless it is its own reverse complement (then it is its own pair)."""
+    groups: dict[tuple[bool, str], list[Contig]] = {}
     for c in contigs:
-        key = (c.circular, _strand_key(c))
-        if key not in best or c.sequence < best[key].sequence:
-            best[key] = c
-    kept = {id(c) for c in best.values()}
-    return [c for c in contigs if id(c) in kept]
+        groups.setdefault((c.circular, _strand_key(c)), []).append(c)
+    kept = []
+    for key, members in groups.items():
+        best = min(members, key=lambda c: c.sequence)
+        paired = len(members) > 1 or _is_own_twin(best)
+        kept.append(replace(best, strand="smaller-of-pair" if paired else "unpaired"))
+    return kept
 
 
 def _make_contig(seq: str, multiplicities: list[int], circular: bool, strand: str) -> Contig:
@@ -255,7 +267,7 @@ def extract_contigs(ag: nx.DiGraph, k: int, *, both_strands: bool) -> tuple[Cont
 
     Known limitation: the graph is collapsed, so repeats longer than k merge into one
     path; a pure repeat such as ``AAAAAAAAAA`` is reported as a short circular contig."""
-    strand = "smaller-of-pair" if both_strands else "as-assembled"
+    strand = "as-assembled"  # with both strands the twin pairing below relabels each contig
     used_edges: set[tuple[str, str]] = set()
     contigs = _open_contigs(ag, strand, used_edges) + _cyclic_contigs(ag, strand, used_edges)
     if both_strands:

@@ -266,11 +266,6 @@ def test_equal_cycles_are_numbered_the_same_in_two_processes():
         assert [tuple(row) for row in json.loads(done.stdout)] == expected
 
 
-@pytest.mark.xfail(
-    strict=True,
-    raises=AssertionError,
-    reason="A5: a contig whose twin is absent is reported as smaller-of-pair",
-)
 def test_unpaired_twin_is_reported_as_it_is():
     forward = count_kmers(brute_kmers(["ACGTT"], 3, False))
     alone = extract_contigs(build_assembly_graph(forward), 3, both_strands=True)
@@ -284,3 +279,23 @@ def test_a_contig_and_its_twin_are_kept_once_and_a_palindrome_is_kept_once():
     own = count_kmers(brute_kmers(["ATGCAT"], 6, True))
     pal = extract_contigs(build_assembly_graph(own), 6, both_strands=True)
     assert [(c.sequence, c.strand) for c in pal] == [("ATGCAT", "smaller-of-pair")]
+    # A cycle that is its own reverse complement: ACGT read round the cycle is ACGT again.
+    # Its k-mers are ACG, CGT, GTA, TAC, and the reverse strand gives the same four.
+    ring = count_kmers(brute_kmers(["ACGTAC"], 3, True))
+    cyc = extract_contigs(build_assembly_graph(ring), 3, both_strands=True)
+    assert [(c.sequence, c.circular, c.strand) for c in cyc] == [
+        ("ACGTAC", True, "smaller-of-pair")
+    ]
+    # A cycle that is its own reverse complement only up to rotation. GATCGA at k=3 has
+    # k-mers GAT, ATC, TCG, CGA; their reverse complements ATC, GAT, CGA, TCG are the same
+    # four. Nodes GA, AT, TC, CG form one cycle, read from its least node AT: ATCGAT. One
+    # turn is ATCG; its reverse complement is CGAT, a rotation of ATCG but not equal to it.
+    # TCGATCG at k=4 has TCGA, CGAT, GATC, ATCG; reverse complements TCGA, ATCG, GATC, CGAT
+    # are the same four. Nodes TCG, CGA, GAT, ATC, read from ATC: ATCGATC; the turn is ATCG
+    # again (rc CGAT).
+    for read, k, expected in (("GATCGA", 3, "ATCGAT"), ("TCGATCG", 4, "ATCGATC")):
+        twisted = count_kmers(brute_kmers([read], k, True))
+        got = extract_contigs(build_assembly_graph(twisted), k, both_strands=True)
+        assert [(c.sequence, c.circular, c.strand) for c in got] == [
+            (expected, True, "smaller-of-pair")
+        ]

@@ -208,6 +208,33 @@ def test_notes_only_for_what_was_done(settings, removed, n_notes):
 
 
 @pytest.mark.parametrize(
+    ("reads", "settings", "smaller", "unpaired"),
+    [
+        # AATC, k=3, both strands: k-mers AAT, ATC and, from the reverse strand GATT, GAT, ATT.
+        # Nodes AA->AT->TC and GA->AT->TT meet at AT. Tip clipping removes AA (source beside the
+        # merge at AT) and TC (dead end beside the branch at AT); GA->AT->TT stays, GATT, and
+        # its twin AATC is gone: one unpaired contig, no smaller-of-pair.
+        (["AATC"], Settings(k=3, both_strands=True, clip_tips=True), 0, 1),
+        # The same read without clipping: the merge at AT splits the graph into four one-edge
+        # contigs AAT, ATC, ATT, GAT; AAT/ATT and ATC/GAT are twins, so AAT and ATC are reported.
+        (["AATC"], Settings(k=3, both_strands=True), 2, 0),
+        # ACTGG shares no 2-mer with the AATC strands, so it keeps its twin CCAGT and is
+        # reported once as ACTGG (smaller); GATT stays unpaired as above.
+        (["AATC", "ACTGG"], Settings(k=3, both_strands=True, clip_tips=True), 1, 1),
+    ],
+    ids=["twin-clipped", "twin-kept", "mixed"],
+)
+def test_note_matches_the_strand_labels(reads, settings, smaller, unpaired):
+    a = analyze(_records(*reads), settings)
+    labels = Counter(c.strand for c in a.contigs)
+    assert (labels["smaller-of-pair"], labels["unpaired"]) == (smaller, unpaired)
+    # The strand note says which strand of a pair is reported: it is there only when some contig
+    # was one of a pair. The only other note here is the tip clipping one.
+    strand_notes = len(a.notes) - (a.clipped_branches > 0)
+    assert strand_notes == (1 if smaller else 0)
+
+
+@pytest.mark.parametrize(
     ("settings", "expected"),
     [
         (

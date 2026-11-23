@@ -253,7 +253,12 @@ def _headline(g, trails: list[graph.Trail]) -> str:
 
 
 def _notes(
-    found: kmers.Kmers, settings: Settings, removed: int, branches: int, clipped: int
+    found: kmers.Kmers,
+    settings: Settings,
+    removed: int,
+    branches: int,
+    clipped: int,
+    contigs: Sequence[assembly.Contig],
 ) -> tuple[str, ...]:
     notes = []
     if found.short_records:
@@ -268,7 +273,7 @@ def _notes(
         notes.append(
             f"Tip clipping removed {branches} dead-end branch(es), {clipped} distinct k-mers."
         )
-    if settings.both_strands:
+    if any(c.strand == "smaller-of-pair" for c in contigs):
         notes.append(_BOTH_STRANDS_NOTE)
     return tuple(notes)
 
@@ -319,5 +324,5 @@ def analyze(records: Sequence[Record], settings: Settings) -> Analysis:
         clipped_branches=branches,
         clipped_kmers=clipped,
         orfs=tuple(orfs.find_orfs(c.sequence) for c in contigs) if dna else None,
-        notes=_notes(found, settings, removed, branches, clipped),
+        notes=_notes(found, settings, removed, branches, clipped, contigs),
     )
