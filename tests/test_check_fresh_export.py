@@ -48,13 +48,13 @@ def make_repo(root: Path, test_source: str, *, with_package: bool = True) -> Pat
     return repo
 
 
-def run_gate(repo: Path) -> subprocess.CompletedProcess:
+def run_gate(repo: Path, **extra_env: str) -> subprocess.CompletedProcess:
     return subprocess.run(
         [sys.executable, str(TOOL), str(repo)],
         capture_output=True,
         text=True,
         timeout=120,
-        env=git_env(),
+        env={**git_env(), **extra_env},
     )
 
 
@@ -71,10 +71,18 @@ def test_passing_repository_exits_zero(tmp_path):
     assert verdict(run_gate(make_repo(tmp_path, PASSING))) == "passed"
 
 
-def test_test_that_reads_an_untracked_file_fails(tmp_path):
-    repo = make_repo(tmp_path, NEEDS_NEW_FILE.replace("new.txt", "untracked.txt"))
-    (repo / "tests" / "untracked.txt").write_text("x", encoding="utf-8")
-    assert verdict(run_gate(repo)) == "failed"
+@pytest.mark.parametrize("outside", ["untracked-file", "module-on-inherited-pythonpath"])
+def test_a_test_that_needs_something_outside_the_export_fails(tmp_path, outside):
+    if outside == "untracked-file":
+        repo = make_repo(tmp_path, NEEDS_NEW_FILE.replace("new.txt", "untracked.txt"))
+        (repo / "tests" / "untracked.txt").write_text("x", encoding="utf-8")
+        assert verdict(run_gate(repo)) == "failed"
+    else:
+        repo = make_repo(tmp_path, "def test_ok():\n    import outside_helper\n")
+        elsewhere = tmp_path / "elsewhere"
+        elsewhere.mkdir()
+        (elsewhere / "outside_helper.py").write_text("", encoding="utf-8")
+        assert verdict(run_gate(repo, PYTHONPATH=str(elsewhere))) == "failed"
 
 
 def test_repository_without_the_package_fails_before_the_tests_run(tmp_path):
