@@ -10,7 +10,7 @@ from Bio.SeqRecord import SeqRecord
 from genomes import random_dna
 
 from eulerase.errors import EuleraseError
-from eulerase.io import read_records
+from eulerase.io import detect_format, read_records
 from eulerase.sequence import Record
 
 _WRITTEN = [
@@ -86,25 +86,32 @@ def test_biopython_failure_becomes_one_sentence(tmp_path):
 
 _FA = ">r1\nACGTACGTAC\n>r2\nGGGTTTAAAC\n"
 _FA_SEQS = ["ACGTACGTAC", "GGGTTTAAAC"]
-_B9 = pytest.mark.xfail(strict=True, reason="B9: format guessed from the file name")
 
 
 @pytest.mark.parametrize(
     ("name", "data", "expected"),
     [
-        pytest.param("a.fa", b"\xef\xbb\xbf" + _FA.encode(), _FA_SEQS, marks=_B9, id="bom"),
+        pytest.param("a.fa", b"\xef\xbb\xbf" + _FA.encode(), _FA_SEQS, id="bom"),
+        pytest.param("a.fa", b"\n\n  \n" + _FA.encode(), _FA_SEQS, id="blank-lines-fasta"),
+        pytest.param(
+            "a.fq",
+            b"\n" + _bio_text([Record("q", "ACGTACGTAC")], "fastq").encode(),
+            ["ACGTACGTAC"],
+            id="blank-lines-fastq",
+        ),
+        pytest.param("a.fa", b"\xef\xbb\xbf\n" + _FA.encode(), _FA_SEQS, id="bom-then-blank-line"),
         pytest.param("a.txt", _FA.encode(), _FA_SEQS, id="fasta-named-txt"),
         pytest.param(
             "a.fa",
             _bio_text([Record("q", "ACGTACGTAC")], "fastq").encode(),
             ["ACGTACGTAC"],
-            marks=_B9,
             id="fastq-named-fa",
         ),
-        pytest.param("a.txt", b"ACGTACGTAC\nGGGTTTAAAC\n", _FA_SEQS, marks=_B9, id="bare"),
+        pytest.param("a.txt", b"ACGTACGTAC\nGGGTTTAAAC\n", _FA_SEQS, id="bare"),
         pytest.param("a.fa", b"", None, id="empty"),
-        pytest.param("reads.txt", gzip.compress(_FA.encode()), _FA_SEQS, marks=_B9, id="gz-txt"),
-        pytest.param("reads.gz", _FA.encode(), _FA_SEQS, marks=_B9, id="plain-gz"),
+        pytest.param("a.fa", b"hello, world 42\n", None, id="unrecognised"),
+        pytest.param("reads.txt", gzip.compress(_FA.encode()), _FA_SEQS, id="gz-txt"),
+        pytest.param("reads.gz", _FA.encode(), _FA_SEQS, id="plain-gz"),
     ],
 )
 def test_format_is_detected_from_content(tmp_path, name, data, expected):
@@ -117,13 +124,42 @@ def test_format_is_detected_from_content(tmp_path, name, data, expected):
         assert [r.sequence for r in read_records(path)] == expected
 
 
+@pytest.mark.parametrize(
+    ("data", "expected"),
+    [
+        (b">r1\nACGT\n", "fasta"),
+        (b"@q\nACGT\n+\nIIII\n", "fastq"),
+        (b"LOCUS       X1   4 bp    DNA\nORIGIN\n", "genbank"),
+        (b"ID   X1; SV 1; linear; DNA; STD; UNC; 4 BP.\n", "embl"),
+        (b"ACGT\nGGTT\n", "bare"),
+        (b"acgt\n", "bare"),
+        (b"\xef\xbb\xbf>r1\nACGT\n", "fasta"),
+        (b"\n\n  \n>r1\nACGT\n", "fasta"),
+        (b">r1\r\nACGT\r\n", "fasta"),
+    ],
+    ids=[
+        "fasta",
+        "fastq",
+        "genbank",
+        "embl",
+        "bare",
+        "bare-lower-case",
+        "bom",
+        "blank-lines",
+        "crlf",
+    ],
+)
+def test_detect_format_looks_at_content_only(data, expected):
+    assert detect_format(data) == expected
+
+
 _GZ = gzip.compress(_bio_text(_WRITTEN, "fasta").encode())
 
 
 @pytest.mark.parametrize(
     "data",
-    [_GZ[: len(_GZ) // 2], _GZ[:20] + b"\xff" * 8 + _GZ[28:]],
-    ids=["truncated", "damaged"],
+    [_GZ[: len(_GZ) // 2], _GZ[:20] + b"\xff" * 8 + _GZ[28:], b"\x1f\x8b" + b"junk" * 8],
+    ids=["truncated", "damaged", "bad-header"],
 )
 def test_broken_gzip_is_an_error_not_a_crash(tmp_path, data):
     path = tmp_path / "reads.fa.gz"
