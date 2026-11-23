@@ -47,6 +47,85 @@ def build_assembly_graph(counts: Mapping[str, int]) -> nx.DiGraph:
     return ag
 
 
+def filter_min_multiplicity(ag: nx.DiGraph, minimum: int) -> tuple[nx.DiGraph, int]:
+    """A copy without the k-mers seen fewer than *minimum* times, and how many distinct
+    k-mers that removed. Nodes left without an edge are dropped too."""
+    out = ag.copy()
+    rare = [(u, v) for u, v, n in out.edges(data="multiplicity") if n < minimum]
+    out.remove_edges_from(rare)
+    out.remove_nodes_from(list(nx.isolates(out)))
+    return out, len(rare)
+
+
+def _remove_tips(ag: nx.DiGraph, k: int) -> int:
+    """Remove, in place, dead-end paths shorter than ``2 * k`` nodes that end beside a
+    branch. Returns the number of paths removed.
+
+    Known limitation: the test is on path length only and compares no multiplicity, so a
+    genuine end of the input next to a branch or repeat can be clipped. Each pass rescans
+    all nodes, which is quadratic in the worst case."""
+    max_tip_len = 2 * k
+    removed = 0
+    changed = True
+    while changed:
+        changed = False
+        for node in list(ag.nodes()):
+            if node not in ag:
+                continue
+            # Forward tip: dead end (out_degree == 0)
+            if ag.out_degree(node) == 0 and ag.in_degree(node) >= 1:
+                path = [node]
+                cur = node
+                is_tip = False
+                for _ in range(max_tip_len):
+                    preds = list(ag.predecessors(cur))
+                    if len(preds) != 1:
+                        break
+                    pred = preds[0]
+                    if ag.out_degree(pred) > 1:
+                        is_tip = True
+                        break
+                    path.append(pred)
+                    cur = pred
+                if is_tip and len(path) < max_tip_len:
+                    for n in path:
+                        ag.remove_node(n)
+                    removed += 1
+                    changed = True
+                    continue
+            # Backward tip: source (in_degree == 0)
+            if node not in ag:
+                continue
+            if ag.in_degree(node) == 0 and ag.out_degree(node) >= 1:
+                path = [node]
+                cur = node
+                is_tip = False
+                for _ in range(max_tip_len):
+                    succs = list(ag.successors(cur))
+                    if len(succs) != 1:
+                        break
+                    succ = succs[0]
+                    if ag.in_degree(succ) > 1:
+                        is_tip = True
+                        break
+                    path.append(succ)
+                    cur = succ
+                if is_tip and len(path) < max_tip_len:
+                    for n in path:
+                        ag.remove_node(n)
+                    removed += 1
+                    changed = True
+    return removed
+
+
+def clip_tips(ag: nx.DiGraph, k: int) -> tuple[nx.DiGraph, int, int]:
+    """A copy with short dead-end branches clipped, the number of branches removed and the
+    number of distinct k-mers (edges) the graph lost."""
+    out = ag.copy()
+    branches = _remove_tips(out, k)
+    return out, branches, ag.number_of_edges() - out.number_of_edges()
+
+
 def _least_rotation(s: str) -> str:
     """Lexicographically least rotation of *s* (Booth's algorithm, O(n))."""
     n = len(s)
@@ -221,3 +300,44 @@ def assembly_metrics(contigs: Sequence[Contig]) -> Metrics:
 def kmer_spectrum(counts: Mapping[str, int]) -> dict[int, int]:
     """Multiplicity to the number of distinct k-mers seen that many times, ascending."""
     return dict(sorted(Counter(counts.values()).items()))
+
+
+Link = tuple[int, str, int, str]
+
+
+def _flip(orient: str) -> str:
+    return "-" if orient == "+" else "+"
+
+
+def gfa_links(contigs: Sequence[Contig], k: int, both_strands: bool) -> list[Link]:
+    """Overlap links ``(from_id, from_orient, to_id, to_orient)`` between contigs.
+
+    A link joins two oriented contigs when the last k-1 bases of the first equal the
+    first k-1 of the second. With *both_strands* (each kept contig stands for its reverse
+    complement too) either strand of every contig can take part, and ``-`` marks the
+    reverse complement. A link and its mirror image (``b- -> a-`` for ``a+ -> b+``) are
+    the same GFA edge, so only one is written."""
+    orients = ("+", "-") if both_strands else ("+",)
+    seqs = {
+        (c.id, o): c.sequence if o == "+" else reverse_complement(c.sequence)
+        for c in contigs
+        for o in orients
+    }
+    circular = {c.id: c.circular for c in contigs}
+    n = k - 1
+    by_prefix: dict[str, list[tuple[int, str]]] = {}
+    for key, seq in seqs.items():
+        by_prefix.setdefault(seq[:n], []).append(key)
+    links: list[Link] = []
+    seen: set[Link] = set()
+    for (a, ao), seq in seqs.items():
+        for b, bo in by_prefix.get(seq[-n:], []):
+            if (a, ao) == (b, bo) and not circular[a]:
+                continue
+            mirror = (b, _flip(bo), a, _flip(ao))
+            if mirror in seen:
+                continue
+            link = (a, ao, b, bo)
+            seen.add(link)
+            links.append(link)
+    return links
