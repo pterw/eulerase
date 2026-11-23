@@ -39,11 +39,13 @@ def find_orfs(sequence: str, *, min_aa: int = MIN_ORF_AA) -> tuple[Orf, ...]:
     for s_seq, strand in strands:
         n = len(s_seq)
         for frame in range(3):
+            resume = 0  # first position after the stop that ended the previous ORF in this frame
             for i in range(frame, n - 2, 3):
-                if s_seq[i : i + 3] != "ATG":
+                if i < resume or s_seq[i : i + 3] != "ATG":
                     continue
                 for j in range(i + 3, n - 2, 3):
                     if s_seq[j : j + 3] in _STOPS:
+                        resume = j + 3
                         aa_len = (j - i) // 3
                         if aa_len >= min_aa:
                             nt_sub = s_seq[i : j + 3]
@@ -64,4 +66,6 @@ def find_orfs(sequence: str, *, min_aa: int = MIN_ORF_AA) -> tuple[Orf, ...]:
                                 )
                             )
                         break
+                else:
+                    break  # no stop before the end: no later ATG in this frame has one either
     return tuple(sorted(orfs, key=lambda o: (-o.strand, abs(o.frame), o.start)))

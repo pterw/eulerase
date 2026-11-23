@@ -39,48 +39,41 @@ def six_frame_orfs(seq: str, min_aa: int) -> list[Orf]:
     return sorted(out, key=lambda o: (-o.strand, abs(o.frame), o.start))
 
 
-def _one_start_per_stop(seq: str) -> bool:
-    """True when no stop-terminated piece in any frame holds a second M."""
-    return all(
-        piece.count("M") <= 1
-        for s in (seq, revcomp(seq))
-        for f in range(3)
-        for _, piece in _frame_pieces(s, f)
-    )
-
-
 def _random_with_n(rng: random.Random, n: int) -> str:
     return "".join(rng.choices("ACGTN", weights=(10, 10, 10, 10, 1), k=n))
 
 
 @pytest.mark.parametrize("min_aa", [10, 3])
 def test_find_orfs_matches_six_frame_scan(min_aa):
-    """Where each stop has one ATG, every field of every ORF equals the per-frame translation.
-
-    Sequences with a second in-frame ATG before a stop are left out: that is the B7 case below.
-    """
+    """Every field of every ORF equals the per-frame translation, several ATGs per stop included."""
     rng = random.Random(7)
-    checked = found = 0
-    while checked < 300:
+    found = 0
+    for _ in range(300):
         seq = _random_with_n(rng, rng.randint(30, 300))
-        if not _one_start_per_stop(seq):
-            continue
         expected = six_frame_orfs(seq, min_aa)
         assert list(find_orfs(seq, min_aa=min_aa)) == expected, seq
-        checked += 1
         found += len(expected)
     assert found > 50  # the comparison is not vacuous
 
 
-def test_oracle_rejects_an_inflated_orf_count():
-    # Two in-frame ATGs before one stop: the oracle reports one ORF, not one per ATG.
-    seq = "ATG" + "ATG" + "GCT" * 12 + "TAA"
-    assert len(six_frame_orfs(seq, 3)) == 1
-    assert len(six_frame_orfs(seq, 3)) != 2
-    assert not _one_start_per_stop(seq)
+_FORWARD = "ATG" + "GCT" * 12 + "TAA"  # 42 nt: ATG, 12 x GCT, TAA
+# Reverse case: "CC" + revcomp(_FORWARD), 44 nt. Its reverse complement is _FORWARD + "GG", so the
+# ORF sits in the first reading frame of the reverse strand, strand -1, frame -1, at 0..42 there,
+# which is 44 - 42 = 2 to 44 - 0 = 44 on the forward strand. Length 42 nt, 13 aa, M + 12 A.
+_REVERSE = "CC" + revcomp(_FORWARD)
 
 
-@pytest.mark.xfail(strict=True, reason="B7: every in-frame ATG before a stop is reported")
+@pytest.mark.parametrize(
+    "seq, expected",
+    [
+        (_FORWARD, Orf(1, 1, 0, 42, 42, 13, "M" + "A" * 12)),
+        (_REVERSE, Orf(-1, -1, 2, 44, 42, 13, "M" + "A" * 12)),
+    ],
+)
+def test_oracle_matches_hand_worked_orfs(seq, expected):
+    assert six_frame_orfs(seq, 3) == [expected]
+
+
 def test_one_orf_per_stop_codon():
     seq = "ATG" + "ATG" + "GCT" * 12 + "TAA"
     orfs = find_orfs(seq, min_aa=3)
