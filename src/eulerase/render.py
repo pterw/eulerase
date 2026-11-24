@@ -777,6 +777,23 @@ def _draw_left_out(fig: Figure, plot: _Plot, bottom: float) -> None:
         )
 
 
+def _draw_note(ax, a: Analysis) -> None:
+    """The one explanation of the drawing limit, with both counts, in place of the plot."""
+    ax.text(
+        0.5,
+        0.5,
+        f"{a.headline}\n\n(The graph is not drawn: "
+        f"{' and '.join(_counts_over_limit(_walk_graph(a)))}.\n"
+        "Use the tables below to inspect the Eulerian trails and assembly contigs.)",
+        ha="center",
+        va="center",
+        color=INK,
+        fontsize=12,
+        transform=ax.transAxes,
+        gid="note",
+    )
+
+
 def draw_figure(
     fig: Figure,
     a: Analysis,
@@ -789,19 +806,7 @@ def draw_figure(
     ax.set_facecolor(SURFACE)
     ax.axis("off")
     if layout is None:
-        ax.text(
-            0.5,
-            0.5,
-            f"{a.headline}\n\n(The graph is not drawn: "
-            f"{' and '.join(_counts_over_limit(_walk_graph(a)))}.\n"
-            "Use the tables below to inspect the Eulerian trails and assembly contigs.)",
-            ha="center",
-            va="center",
-            color=INK,
-            fontsize=12,
-            transform=ax.transAxes,
-            gid="note",
-        )
+        _draw_note(ax, a)
         return
     width, height = fig.get_figwidth() * 72, fig.get_figheight() * 72
     top = _draw_header(fig, a)
@@ -818,6 +823,79 @@ def draw_figure(
     plot = _build_plot(ax, a, layout, FIGURE_ASPECT)
     plot.style(sum(len(trail) for trail in a.trails) if upto is None else upto)
     _draw_left_out(fig, plot, footer)
+
+
+HOVER_PT = 8.0  # font size of the read-out of a node under the pointer
+
+
+class StepScene:
+    """The plot of `draw_figure`, drawn once on `fig` and restyled for each step: `show` changes
+    properties of elements made here and creates none, moves no label and never lays out again.
+    The headline, the legend and the other frame texts are not drawn: the window has its own."""
+
+    def __init__(self, fig: Figure, a: Analysis, layout: dict[str, Point] | None) -> None:
+        fig.clear()
+        self._ax = ax = fig.add_axes((0, 0, 1, 1))
+        ax.set_facecolor(SURFACE)
+        ax.axis("off")
+        self._plot: _Plot | None = None
+        self._hover: Text | None = None
+        if layout is None:
+            _draw_note(ax, a)
+            return
+        self._plot = _build_plot(ax, a, layout, fig.get_figwidth() / fig.get_figheight())
+        self._plot.style(0)
+        self._degrees = {row.node: (row.in_degree, row.out_degree) for row in a.nodes}
+        self._hover = ax.text(
+            0.01,
+            0.99,
+            "",
+            transform=ax.transAxes,
+            ha="left",
+            va="top",
+            family=MONO,
+            fontsize=HOVER_PT,
+            color=INK,
+            zorder=7,
+            visible=False,
+            gid="hover",
+            bbox=dict(boxstyle="round,pad=0.3", facecolor=SURFACE, edgecolor=RULE),
+        )
+
+    def show(self, upto: int) -> None:
+        """Style the plot for the first `upto` steps of the walk."""
+        if self._plot is not None:
+            self._plot.style(upto)
+
+    @property
+    def left_out(self) -> tuple[int, int]:
+        """The labels shortened and the labels left out: the counts `draw_figure` writes."""
+        if self._plot is None:
+            return (0, 0)
+        return (self._plot.placement.shortened, self._plot.placement.left_out)
+
+    def node_at(self, x: float, y: float) -> str | None:
+        """The node whose disc holds the display point (x, y), or None. Discs never overlap."""
+        if self._plot is None:
+            return None
+        self._ax.apply_aspect()  # a figure resized and not yet drawn has a stale data transform
+        to_display = self._ax.transData.transform
+        for node, disc in self._plot.nodes.items():
+            cx, cy = to_display(disc.center)
+            reach = to_display((disc.center[0] + disc.radius, disc.center[1]))[0] - cx
+            if math.dist((cx, cy), (x, y)) <= reach:
+                return node
+        return None
+
+    def show_hover(self, node: str | None) -> None:
+        """Show the read-out of `node` (its letters and its in and out degrees), or hide it."""
+        if self._hover is None:
+            return
+        known = node in self._degrees
+        if known:
+            inward, outward = self._degrees[node]
+            self._hover.set_text(f"{node}  in {inward}  out {outward}")
+        self._hover.set_visible(known)
 
 
 def save_figure(a: Analysis, path: str | os.PathLike) -> None:
