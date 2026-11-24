@@ -28,7 +28,7 @@ CONTIG_HEADERS = (
     "min multiplicity",
     "gc",
     "orfs",
-    "circular",
+    "cycle",
     "has n",
     "strand",
 )
@@ -87,7 +87,7 @@ def _expected(a: Analysis) -> dict[str, list[dict[str, str]]]:
                 "min multiplicity": str(c.min_multiplicity),
                 "gc": _fixed(c.gc),
                 "orfs": NOT_AVAILABLE if a.orfs is None else str(len(a.orfs[i])),
-                "circular": _yes_no(c.circular),
+                "cycle": _yes_no(c.circular),
                 "has n": _yes_no(c.has_n),
                 "strand": c.strand,
             }

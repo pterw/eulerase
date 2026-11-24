@@ -54,6 +54,20 @@ def test_short_records_are_counted_not_dropped_silently():
         kmers.from_sequences(_records("AC", "GG"), 4, both_strands=False, unique=False)
 
 
+def test_every_record_empty_is_refused_with_its_own_sentence():
+    # No k helps an empty record, so the refusal must not tell the user to use a smaller k.
+    with pytest.raises(EuleraseError) as empty:
+        kmers.from_sequences(_records("", ""), 3, both_strands=False, unique=False)
+    assert "empty" in str(empty.value)
+    assert "smaller k" not in str(empty.value)
+    beside_long = kmers.from_sequences(_records("", "ACGTAC"), 3, both_strands=False, unique=False)
+    assert beside_long.short_records == 1
+    assert list(beside_long.items) == brute_kmers(["ACGTAC"], 3, False)
+    # an empty record beside a record that is only too short: a smaller k does help here
+    with pytest.raises(EuleraseError, match="smaller k"):
+        kmers.from_sequences(_records("", "AC"), 3, both_strands=False, unique=False)
+
+
 def test_no_records_is_refused():
     with pytest.raises(EuleraseError):
         kmers.from_sequences([], 3, both_strands=False, unique=False)

@@ -267,7 +267,7 @@ _TEN_CSV = {
     ),
     "Trails": "\n".join(["trail,edges,sequence"] + [f"{t},2,ATGC" for t in range(1, 11)] + [""]),
     "Contigs": (
-        "contig,length,edges,k-mer count,mean multiplicity,min multiplicity,gc,orfs,circular,"
+        "contig,length,edges,k-mer count,mean multiplicity,min multiplicity,gc,orfs,cycle,"
         "has n,strand\n1,4,2,20,10.0000,10,0.5000,0,no,no,as-assembled\n"
     ),
     "Assembly": (
@@ -291,7 +291,7 @@ _REPEAT_CSV = {
     ),
     "Trails": "trail,edges,sequence\n1,10,ATGCATGCATGC\n",
     "Contigs": (
-        "contig,length,edges,k-mer count,mean multiplicity,min multiplicity,gc,orfs,circular,"
+        "contig,length,edges,k-mer count,mean multiplicity,min multiplicity,gc,orfs,cycle,"
         "has n,strand\n1,4,4,10,2.5000,2,0.5000,0,yes,no,as-assembled\n"
     ),
     "Assembly": (

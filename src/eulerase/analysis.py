@@ -7,12 +7,17 @@ from eulerase import assembly, graph, kmers, orfs
 from eulerase.assembly import Contig, Metrics
 from eulerase.errors import EuleraseError
 from eulerase.orfs import Orf
-from eulerase.sequence import Record, is_dna
+from eulerase.sequence import Record
 
 DEFAULT_K = 3
 MAX_TABLE_ROWS = 2000
 
 _INPUT_MODES = ("sequences", "kmers")
+_CYCLE_NOTE = (
+    "A contig marked as a cycle is a closed path in the graph: it can be a circular molecule "
+    "or a repeat, and its position 1 is its alphabetically first rotation, not a biological start."
+)
+_GC_AND_N_NOTE = "GC is computed over A, C, G and T; N is left out of both counts."
 _BOTH_STRANDS_NOTE = (
     "Both strands: reported one contig per strand pair (the smaller strand in string order "
     "is kept, which may be the reverse complement of the input)."
@@ -181,7 +186,7 @@ _TABLE_DEFS = {
             ("min multiplicity", lambda t: t[0].min_multiplicity),
             ("gc", lambda t: t[0].gc),
             ("orfs", lambda t: t[1]),
-            ("circular", lambda t: t[0].circular),
+            ("cycle", lambda t: t[0].circular),
             ("has n", lambda t: t[0].has_n),
             ("strand", lambda t: t[0].strand),
         ),
@@ -259,6 +264,8 @@ def _notes(
     branches: int,
     clipped: int,
     contigs: Sequence[assembly.Contig],
+    gc: float | None,
+    letters: Sequence[str],
 ) -> tuple[str, ...]:
     notes = []
     if found.short_records:
@@ -266,16 +273,29 @@ def _notes(
     if found.duplicates_dropped:
         notes.append(f"Set of k-mers: {found.duplicates_dropped} repeated occurrence(s) dropped.")
     if removed:
-        notes.append(
-            f"Removed {removed} distinct k-mers seen fewer than {settings.min_multiplicity} times."
-        )
+        what = "1 distinct k-mer" if removed == 1 else f"{removed} distinct k-mers"
+        notes.append(f"Removed {what} seen fewer than {settings.min_multiplicity} times.")
     if branches:
         notes.append(
             f"Tip clipping removed {branches} dead-end branch(es), {clipped} distinct k-mers."
         )
     if any(c.strand == "smaller-of-pair" for c in contigs):
         notes.append(_BOTH_STRANDS_NOTE)
+    if any(c.circular for c in contigs):
+        notes.append(_CYCLE_NOTE)
+    if gc is not None and any(c.has_n for c in contigs):
+        notes.append(_GC_AND_N_NOTE)
+    if letters:
+        notes.append(
+            "GC and ORFs are not available because the input holds letters other than "
+            f"A, C, G, T and N: {', '.join(letters)}."
+        )
     return tuple(notes)
+
+
+def _find_orfs(contigs: Sequence[assembly.Contig]) -> tuple[tuple[Orf, ...], ...]:
+    """A cycle is searched as a circle, every other contig as a line."""
+    return tuple(orfs.find_orfs(c.sequence, circular=c.circular) for c in contigs)
 
 
 def analyze(records: Sequence[Record], settings: Settings) -> Analysis:
@@ -304,7 +324,10 @@ def analyze(records: Sequence[Record], settings: Settings) -> Analysis:
     if settings.clip_tips:
         ag, branches, clipped = assembly.clip_tips(ag, k)
     contigs = assembly.extract_contigs(ag, k, both_strands=settings.both_strands)
-    dna = all(is_dna(r.sequence) for r in records)
+    metrics = assembly.assembly_metrics(contigs)
+    # DNA is decided by the non-empty records: an empty record has no letters to be wrong
+    letters = sorted({ch for r in records for ch in r.sequence.upper()} - set("ACGTN"))
+    dna = not letters
     return Analysis(
         settings=settings,
         k=k,
@@ -318,11 +341,11 @@ def analyze(records: Sequence[Record], settings: Settings) -> Analysis:
         spelled=tuple(graph.spell(t) for t in trails),
         nodes=_node_rows(g, trails),
         contigs=contigs,
-        metrics=assembly.assembly_metrics(contigs),
+        metrics=metrics,
         spectrum=tuple(assembly.kmer_spectrum(counts).items()),
         removed_kmers=removed,
         clipped_branches=branches,
         clipped_kmers=clipped,
-        orfs=tuple(orfs.find_orfs(c.sequence) for c in contigs) if dna else None,
-        notes=_notes(found, settings, removed, branches, clipped, contigs),
+        orfs=_find_orfs(contigs) if dna else None,
+        notes=_notes(found, settings, removed, branches, clipped, contigs, metrics.gc, letters),
     )

@@ -57,6 +57,8 @@ def from_sequences(records: Sequence[Record], k: int, *, both_strands: bool, uni
     sequences = [r.sequence for r in records]
     if both_strands:
         require_dna(sequences)
+    if not any(sequences):
+        raise EuleraseError("Every record is empty; give a sequence with letters.")
     long_enough = [s for s in sequences if len(s) >= k]
     if not long_enough:
         raise EuleraseError(f"No record is at least k={k} letters long; use a smaller k.")

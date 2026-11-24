@@ -5,8 +5,10 @@ import re
 from collections import Counter
 
 import pytest
+from Bio.Seq import Seq
 from genomes import brute_kmers, random_dna
 
+from eulerase import orfs
 from eulerase.analysis import Settings, analyze, settings_text
 from eulerase.assembly import Metrics
 from eulerase.errors import EuleraseError
@@ -145,6 +147,92 @@ def test_non_dna_gives_not_available_not_empty():
     assert mixed.orfs is None
     with pytest.raises(EuleraseError):
         analyze(_records("LEMONLEMONADE"), Settings(k=3, both_strands=True))
+
+
+def test_dna_is_decided_by_the_non_empty_records():
+    # an empty record is counted short; it must not turn GC and ORFs off for the others
+    a = analyze(_records("ACGTACGT", ""), Settings(k=3))
+    assert a.short_records == 1
+    assert a.dna is True
+    assert isinstance(a.orfs, tuple)
+    mixed = analyze(_records("ACGTACGT", "LEMON"), Settings(k=3))  # a real non-DNA record
+    assert (mixed.dna, mixed.orfs) == (False, None)
+
+
+_GENE = (
+    "ATG" + "GCTGCCGCAGCG" + "CTGCTACTCCTT" + "GGTGGCGGAGGG" + "CCTCCCCCACCG"
+    + "GTTGTCGTAGTG" + "ACTACCACAACG" + "TCT" + "TAA"
+)  # fmt: skip
+
+
+def _least_rotation(s: str) -> str:
+    return min(s[i:] + s[:i] for i in range(len(s)))
+
+
+def _circle_cut_through_the_gene(k: int) -> tuple[str, str]:
+    """A circle holding _GENE and the contig that spells it (its least rotation), accepted only
+    when every circular k-mer is distinct and a linear search of the contig finds no ORF."""
+    for seed in range(500):
+        circle = _GENE + random_dna(9, seed=seed)
+        kmers = {(circle + circle)[i : i + k] for i in range(len(circle))}
+        contig = _least_rotation(circle)
+        if len(kmers) == len(circle) and not orfs.find_orfs(contig):
+            return circle, contig
+    raise AssertionError("no seed cuts the gene")
+
+
+def test_a_cycle_contig_is_searched_as_a_circle():
+    k = 12
+    circle, contig = _circle_cut_through_the_gene(k)
+    reads = circle + circle[: k - 1]  # the reads run once round the circle
+    a = analyze(_records(reads), Settings(k=k))
+    assert [c.sequence for c in a.contigs] == [contig] and a.contigs[0].circular
+    assert orfs.find_orfs(contig) == ()  # precondition: a linear search finds nothing
+    (found,) = a.orfs[0]
+    assert found.end > len(contig)  # it crosses position 1
+    assert found.protein == str(Seq(_GENE).translate(to_stop=True))
+    assert found.length_nt == len(_GENE)
+    # the same gene on a line is still searched as a line
+    line = analyze(_records(_GENE), Settings(k=k))
+    assert not line.contigs[0].circular
+    assert [(o.start, o.end) for o in line.orfs[0]] == [(0, len(_GENE))]
+
+
+@pytest.mark.parametrize(
+    ("reads", "n_notes"),
+    [
+        ("ATGCATGCATGC", 1),  # a cycle: the cycle note
+        ("ACGTTGCA", 0),  # a line
+        ("ACGTNGGCA", 1),  # a line holding N, GC shown: the GC-and-N note
+        ("ACGTGGCA", 0),
+        ("NNNNNN", 1),  # a cycle of N: GC not available, so only the cycle note
+        ("LEMONLEMONADE", 1),  # letters outside ACGTN: the letters note
+    ],
+)
+def test_each_note_is_present_only_under_its_condition(reads, n_notes):
+    a = analyze(_records(reads), Settings(k=3))
+    assert len(a.notes) == n_notes, a.notes
+    if reads == "NNNNNN":
+        assert a.contigs[0].circular and a.metrics.gc is None  # the GC-and-N note must be absent
+    if reads == "LEMONLEMONADE":
+        outside = [c for c in reads if c not in "ACGTN"]
+        assert outside != sorted(outside) and len(outside) > len(set(outside))  # order, repeats
+        letters = a.notes[0].rsplit(":", 1)[1].strip(" .").split(", ")
+        assert letters == ["D", "E", "L", "M", "O"]
+
+
+@pytest.mark.parametrize(
+    ("reads", "removed", "said"),
+    [
+        (["ACGT", "ACGT", "ACGA"], 1, "1 distinct k-mer seen"),
+        (["ACGT", "ACGT", "ACGAT"], 2, "2 distinct k-mers seen"),
+    ],
+)
+def test_the_minimum_multiplicity_note_agrees_in_number(reads, removed, said):
+    a = analyze(_records(*reads), Settings(k=3, min_multiplicity=2))
+    assert a.removed_kmers == removed
+    (note,) = a.notes
+    assert said in note
 
 
 def test_result_is_immutable():
