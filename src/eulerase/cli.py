@@ -11,6 +11,21 @@ from eulerase.sequence import Record, parse_kmer_list, parse_records
 
 _NOT_BUILT = "The window is not built yet; give --seq, --kmers or --file."
 
+# Every option that is not an input and acts only on one: (flag, parser destination).
+_NEEDS_INPUT = (
+    ("-k", "k"),
+    ("--both-strands", "both_strands"),
+    ("--unique", "unique"),
+    ("--min-count", "min_count"),
+    ("--clip-tips", "clip_tips"),
+    ("--metrics", "metrics"),
+    ("--figure", "figure"),
+    ("--csv", "csv"),
+    ("--gfa", "gfa"),
+    ("--contigs", "contigs"),
+    ("--genbank", "genbank"),
+)
+
 
 class _Parser(argparse.ArgumentParser):
     def error(self, message: str) -> None:
@@ -81,6 +96,20 @@ def _parser() -> argparse.ArgumentParser:
     return p
 
 
+def _refuse_ignored_options(args: argparse.Namespace, parser: argparse.ArgumentParser) -> None:
+    """Exit 2 when an option was given that nothing would act on."""
+    if args.kmers is not None:
+        if args.k is not None:
+            parser.error(
+                "-k cannot be used with --kmers: leave -k out, the length is taken from the k-mers."
+            )
+    elif args.seq is None and args.file is None:
+        for flag, dest in _NEEDS_INPUT:
+            value = getattr(args, dest)
+            if value is not None and value is not False:  # 0 is a value the user gave
+                parser.error(f"{flag} needs an input: give --seq, --kmers or --file.")
+
+
 def _records(args: argparse.Namespace) -> list[Record]:
     if args.kmers is not None:
         return parse_kmer_list(" ".join(args.kmers))
@@ -103,7 +132,9 @@ def _settings(args: argparse.Namespace) -> Settings:
 
 def main(argv: Sequence[str] | None = None) -> int:
     sys.stdout.reconfigure(encoding="utf-8", newline="\n")
-    args = _parser().parse_args(argv)
+    parser = _parser()
+    args = parser.parse_args(argv)
+    _refuse_ignored_options(args, parser)
     if args.gui or all(given is None for given in (args.seq, args.kmers, args.file)):
         print(_NOT_BUILT, file=sys.stderr)
         return 1

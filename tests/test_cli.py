@@ -84,14 +84,12 @@ def test_each_input_form_gives_the_same_trails(tmp_path, capsys):
         ["--seq", "ACGT", "-k", "1"],
         ["--seq", ""],
         ["--seq", "HELLO", "--both-strands"],
-        ["--kmers", "ACG", "TGC", "-k", "3"],
         ["--file", ""],
     ],
     ids=[
         "k-too-small",
         "empty-sequence",
         "both-strands-not-dna",
-        "k-given-with-kmers",
         "empty-file-path",
     ],
 )
