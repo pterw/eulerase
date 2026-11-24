@@ -7,6 +7,7 @@ from collections.abc import Sequence
 from eulerase import io
 from eulerase.analysis import DEFAULT_K, Analysis, Settings, analyze, format_cell, rows
 from eulerase.errors import EuleraseError
+from eulerase.render import save_figure
 from eulerase.sequence import Record, parse_kmer_list, parse_records
 
 _NOT_BUILT = "The window is not built yet; give --seq, --kmers or --file."
@@ -140,9 +141,15 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 1
     try:
         result = analyze(_records(args), _settings(args))
+        _print_results(args, result)
+        _write_outputs(args, result)
     except EuleraseError as err:
         print(f"eulerase: {err}", file=sys.stderr)
         return 1
+    return 0
+
+
+def _print_results(args: argparse.Namespace, result: Analysis) -> None:
     print(result.headline)
     for note in result.notes:
         print(f"Note: {note}")
@@ -150,7 +157,25 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(f"trail {i} ({len(trail)} edges): {spelled}")
     if args.metrics:
         _print_metrics(result)
-    return 0
+
+
+def _write_outputs(args: argparse.Namespace, result: Analysis) -> None:
+    """Write each requested file in the order figure, csv, gfa, contigs, genbank."""
+    if args.figure:
+        save_figure(result, args.figure)
+        print(f"Wrote {args.figure}")
+    if args.csv:
+        for table, path in io.csv_paths(args.csv).items():
+            io.write_text_file(path, io.csv_text(result, table.capitalize()))
+            print(f"Wrote {path}")
+    for path, writer in (
+        (args.gfa, io.gfa_text),
+        (args.contigs, io.fasta_text),
+        (args.genbank, io.genbank_text),
+    ):
+        if path:
+            io.write_text_file(path, writer(result))
+            print(f"Wrote {path}")
 
 
 def _print_metrics(result: Analysis) -> None:
