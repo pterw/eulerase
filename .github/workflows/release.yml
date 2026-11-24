@@ -31,11 +31,15 @@ jobs:
           python-version: "3.13"
       - name: decide
         id: decide
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           version="$(python -c "import tomllib; print(tomllib.load(open('pyproject.toml', 'rb'))['project']['version'])")"
           tag="v$version"
           status=0
-          git ls-remote --exit-code --tags origin "refs/tags/$tag" || status=$?
+          auth="$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)"
+          echo "::add-mask::$auth"
+          git -c "http.extraheader=AUTHORIZATION: basic $auth" ls-remote --exit-code --tags origin "refs/tags/$tag" || status=$?
           case "$status" in
             0) echo "release=no" >> "$GITHUB_OUTPUT" ;;
             2) echo "release=yes" >> "$GITHUB_OUTPUT" ;;
