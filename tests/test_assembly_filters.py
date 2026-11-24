@@ -74,11 +74,15 @@ def test_a_filter_returns_a_copy_and_leaves_its_input_alone(apply):
 
 
 def _spelled(contigs: tuple[Contig, ...], k: int) -> list[tuple[int, str]]:
-    """(contig index, k-mer) for every window a contig spells, from the sequences alone."""
+    """(contig index, k-mer) for every window a contig spells, from the sequences alone: a line
+    has len - k + 1 windows, a cycle (its circle written once) has n, read round the circle."""
     out = []
     for i, c in enumerate(contigs):
-        windows = c.edges if c.circular else len(c.sequence) - k + 1
-        out += [(i, c.sequence[j : j + k]) for j in range(windows)]
+        if c.circular:
+            ring = c.sequence * (k // len(c.sequence) + 2)
+            out += [(i, ring[j : j + k]) for j in range(len(c.sequence))]
+        else:
+            out += [(i, c.sequence[j : j + k]) for j in range(len(c.sequence) - k + 1)]
     return out
 
 
@@ -87,12 +91,8 @@ def _is_a_partition(contigs, ag, kept: set[str], k: int, both: bool) -> bool:
     contig is a path in the graph. `kept` comes from the counts, never from the contigs."""
     spelled = _spelled(contigs, k)
     names = [km for _, km in spelled]
-    for c in contigs:
-        walk = [c.sequence[j : j + k] for j in range(len(c.sequence) - k + 1)]
-        if any(ag.get_edge_data(w[:-1], w[1:], {}).get("kmer") != w for w in walk):
-            return False
-        if c.circular and c.sequence[-(k - 1) :] != c.sequence[: k - 1]:
-            return False
+    if any(ag.get_edge_data(w[:-1], w[1:], {}).get("kmer") != w for w in names):
+        return False
     if len(set(names)) != len(names) or not set(names) <= kept:
         return False
     if not both:
@@ -153,11 +153,11 @@ def test_oracle_rejects_a_contig_set_that_repeats_a_kmer():
         (["TACGG", "TACGC"], 3, [(1, "TACG", 2, 4, False), (2, "CGC", 1, 1, False),
                                  (3, "CGG", 1, 1, False)]),
         # AAAA at k=3: AAA twice. One node AA with one edge to itself, so it is one cycle of
-        # one edge: the sequence AA + A = AAA, circular, 2 k-mers seen.
-        (["AAAA"], 3, [(1, "AAA", 1, 2, True)]),
+        # one edge: the circle is its one letter A, circular, 2 k-mers seen.
+        (["AAAA"], 3, [(1, "A", 1, 2, True)]),
         # ACGTAC at k=3: ACG, CGT, GTA, TAC once each, a ring AC>CG>GT>TA>AC of four edges; the
-        # sequence is AC + G + T + A + C = ACGTAC (the first k-1 letters repeated at the end).
-        (["ACGTAC"], 3, [(1, "ACGTAC", 4, 4, True)]),
+        # circle is the first letter of each k-mer, A C G T, which is already its least rotation.
+        (["ACGTAC"], 3, [(1, "ACGT", 4, 4, True)]),
     ],
     ids=["branch", "self-loop", "isolated-cycle"],
 )

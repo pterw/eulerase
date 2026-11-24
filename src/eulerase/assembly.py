@@ -129,23 +129,22 @@ def _least_rotation(s: str) -> str:
     return ss[least : least + n]
 
 
+def _opposite(contig: Contig) -> str:
+    """The contig's reverse complement as it would be reported: a cycle is a circle, so the
+    reverse complement is rotated to its least rotation, as the contig itself is."""
+    opposite = reverse_complement(contig.sequence)
+    return _least_rotation(opposite) if contig.circular else opposite
+
+
 def _strand_key(contig: Contig) -> str:
-    """Strand-independent identity of a contig: the smaller of its sequence and
-    reverse complement. Circular contigs are compared up to rotation."""
-    seq = contig.sequence
-    if contig.circular:
-        core = seq[: contig.edges]  # the cycle without its repeated k-1 tail
-        return min(_least_rotation(core), _least_rotation(reverse_complement(core)))
-    return min(seq, reverse_complement(seq))
+    """Strand-independent identity of a contig: the smaller of its sequence and its
+    reverse complement (a cycle's compared up to rotation)."""
+    return min(contig.sequence, _opposite(contig))
 
 
 def _is_own_twin(contig: Contig) -> bool:
-    """True when the contig is its own reverse complement (up to rotation if circular)."""
-    seq = contig.sequence
-    if contig.circular:
-        core = seq[: contig.edges]
-        return _least_rotation(core) == _least_rotation(reverse_complement(core))
-    return seq == reverse_complement(seq)
+    """True when the contig is its own reverse complement (up to rotation if a cycle)."""
+    return contig.sequence == _opposite(contig)
 
 
 def _drop_reverse_complement_twins(contigs: list[Contig]) -> list[Contig]:
@@ -209,7 +208,10 @@ def _open_contigs(ag: nx.DiGraph, strand: str, used_edges: set[tuple[str, str]])
 
 
 def _cyclic_contigs(ag: nx.DiGraph, strand: str, used_edges: set[tuple[str, str]]) -> list[Contig]:
-    """Isolated cycles: the edges no path used (every node on them is internal)."""
+    """Isolated cycles: the edges no path used (every node on them is internal). A cycle of n
+    k-mers is its circle written once: the first letter of each k-mer in cycle order, so n
+    letters whatever k is. The walk starts at the smallest node, which makes the circle its
+    least rotation (the smallest (k-1)-mer begins the smallest rotation)."""
     contigs: list[Contig] = []
     remaining = set(ag.edges()) - used_edges
     if not remaining:
@@ -232,7 +234,7 @@ def _cyclic_contigs(ag: nx.DiGraph, strand: str, used_edges: set[tuple[str, str]
             if cur == start_node:
                 break
         if cycle:
-            seq = cycle[0][0] + "".join(tgt[-1] for _, tgt in cycle)
+            seq = "".join(src[0] for src, _ in cycle)
             mults = [sub.edges[u, v]["multiplicity"] for u, v in cycle]
             contigs.append(_make_contig(seq, mults, True, strand))
     return contigs
@@ -245,7 +247,7 @@ def extract_contigs(ag: nx.DiGraph, k: int, *, both_strands: bool) -> tuple[Cont
     complement count once: the lexicographically smaller strand is kept.
 
     Known limitation: the graph is collapsed, so repeats longer than k merge into one
-    path; a pure repeat such as ``AAAAAAAAAA`` is reported as a short circular contig."""
+    path; a pure repeat such as ``AAAAAAAAAA`` is reported as a cycle of one letter."""
     strand = "as-assembled"  # with both strands the twin pairing below relabels each contig
     used_edges: set[tuple[str, str]] = set()
     contigs = _open_contigs(ag, strand, used_edges) + _cyclic_contigs(ag, strand, used_edges)
@@ -284,7 +286,7 @@ def assembly_metrics(contigs: Sequence[Contig]) -> Metrics:
         l50=l50,
         n90=n90,
         gc=gc_content("".join(c.sequence for c in contigs)),
-        mean_multiplicity=float(statistics.mean(c.mean_multiplicity for c in contigs)),
+        mean_multiplicity=sum(c.kmer_count for c in contigs) / sum(c.edges for c in contigs),
     )
 
 
@@ -301,20 +303,22 @@ def _flip(orient: str) -> str:
 
 
 def gfa_links(contigs: Sequence[Contig], k: int, both_strands: bool) -> list[Link]:
-    """Overlap links ``(from_id, from_orient, to_id, to_orient)`` between contigs.
+    """Links ``(from_id, from_orient, to_id, to_orient)`` between contigs.
 
-    A link joins two oriented contigs when the last k-1 bases of the first equal the
-    first k-1 of the second. With *both_strands* (each kept contig stands for its reverse
-    complement too) either strand of every contig can take part, and ``-`` marks the
-    reverse complement. A link and its mirror image (``b- -> a-`` for ``a+ -> b+``) are
-    the same GFA edge, so only one is written."""
+    A link joins two oriented contigs that are not cycles when the last k-1 bases of the
+    first equal the first k-1 of the second; a contig whose own ends overlap links to
+    itself. With *both_strands* (each kept contig stands for its reverse complement too)
+    either strand of every contig can take part, and ``-`` marks the reverse complement. A
+    link and its mirror image (``b- -> a-`` for ``a+ -> b+``) are the same GFA edge, so only
+    one is written. A cycle takes part in no overlap link: it has exactly one link, to
+    itself, ``(id, "+", id, "+")``, with both strands too."""
     orients = ("+", "-") if both_strands else ("+",)
     seqs = {
         (c.id, o): c.sequence if o == "+" else reverse_complement(c.sequence)
         for c in contigs
+        if not c.circular
         for o in orients
     }
-    circular = {c.id: c.circular for c in contigs}
     n = k - 1
     by_prefix: dict[str, list[tuple[int, str]]] = {}
     for key, seq in seqs.items():
@@ -323,12 +327,10 @@ def gfa_links(contigs: Sequence[Contig], k: int, both_strands: bool) -> list[Lin
     seen: set[Link] = set()
     for (a, ao), seq in seqs.items():
         for b, bo in by_prefix.get(seq[-n:], []):
-            if (a, ao) == (b, bo) and not circular[a]:
-                continue
             mirror = (b, _flip(bo), a, _flip(ao))
             if mirror in seen:
                 continue
             link = (a, ao, b, bo)
             seen.add(link)
             links.append(link)
-    return links
+    return links + [(c.id, "+", c.id, "+") for c in contigs if c.circular]

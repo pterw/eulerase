@@ -2,6 +2,7 @@
 
 import json
 import os
+import random
 import statistics
 import subprocess
 import sys
@@ -15,6 +16,8 @@ from eulerase.assembly import (
     assembly_metrics,
     build_assembly_graph,
     extract_contigs,
+    filter_min_multiplicity,
+    gfa_links,
     kmer_spectrum,
 )
 from eulerase.kmers import count_kmers
@@ -107,6 +110,11 @@ def test_n_does_not_defeat_twin_removal():
     assert all(c.has_n == ("N" in c.sequence) for c in mixed)
 
 
+def _least(circle: str) -> str:
+    """The lexicographically least rotation of a circle, by trying every rotation."""
+    return min(circle[i:] + circle[:i] for i in range(len(circle)))
+
+
 def test_circular_genome_with_both_strands_is_one_circular_contig():
     genome = random_dna(300, seed=9)
     k = 15
@@ -114,6 +122,8 @@ def test_circular_genome_with_both_strands_is_one_circular_contig():
     assert len(contigs) == 1
     assert contigs[0].circular is True
     assert contigs[0].edges == len(genome)
+    assert contigs[0].length == len(genome)
+    assert contigs[0].sequence in {_least(genome), _least(revcomp(genome))}
 
 
 def test_multiplicity_is_per_distinct_kmer():
@@ -132,6 +142,14 @@ def _n_statistic(lengths: list[int], fraction: float) -> tuple[int, int]:
     raise AssertionError("unreachable")
 
 
+def _windows(sequence: str, k: int, circular: bool) -> list[str]:
+    """The k-mers a contig spells: the windows of a line, or the n of a circle read round."""
+    if circular:
+        ring = sequence * (k // len(sequence) + 2)
+        return [ring[j : j + k] for j in range(len(sequence))]
+    return [sequence[j : j + k] for j in range(len(sequence) - k + 1)]
+
+
 def test_oracle_rejects_a_wrong_n50():
     assert _n_statistic([10, 10, 10, 1], 0.5) == (10, 2)
     assert _n_statistic([10, 10, 10, 1], 0.5) != (1, 4)
@@ -143,13 +161,14 @@ def test_metrics_match_direct_computation(seed):
     reads = [random_dna(k + 5 + (seed * (i + 3)) % 40, seed * 7 + i) for i in range(1 + seed % 5)]
     counts = count_kmers(brute_kmers(reads, k, False) + brute_kmers(reads[:1], k, False))
     contigs = extract_contigs(build_assembly_graph(counts), k, both_strands=False)
-    per_contig = []
+    windows = total_seen = 0
     for c in contigs:
-        seen = [counts[c.sequence[i : i + k]] for i in range(len(c.sequence) - k + 1)]
+        seen = [counts[w] for w in _windows(c.sequence, k, c.circular)]
         assert (c.edges, c.kmer_count, c.min_multiplicity) == (len(seen), sum(seen), min(seen))
         assert c.mean_multiplicity == pytest.approx(sum(seen) / len(seen))
         assert c.gc == (c.sequence.count("G") + c.sequence.count("C")) / len(c.sequence)
-        per_contig.append(sum(seen) / len(seen))
+        windows += len(seen)
+        total_seen += sum(seen)
     lengths = [len(c.sequence) for c in contigs]
     joined = "".join(c.sequence for c in contigs)
     m = assembly_metrics(contigs)
@@ -159,7 +178,7 @@ def test_metrics_match_direct_computation(seed):
     assert (m.n50, m.l50) == _n_statistic(lengths, 0.5)
     assert m.n90 == _n_statistic(lengths, 0.9)[0]
     assert m.gc == pytest.approx((joined.count("G") + joined.count("C")) / len(joined))
-    assert m.mean_multiplicity == pytest.approx(statistics.mean(per_contig))
+    assert m.mean_multiplicity == pytest.approx(total_seen / windows)
 
 
 def test_no_contigs_gives_zero_integers_and_missing_values():
@@ -194,9 +213,9 @@ def test_worked_case_repeat_inside_one_sequence():
     counts = count_kmers(brute_kmers([read], 3, False))
     contigs = extract_contigs(build_assembly_graph(counts), 3, both_strands=False)
     assert Counter(counts.values()) == {3: 2, 2: 2}
-    assert [(c.sequence, c.circular, c.edges) for c in contigs] == [("ATGCAT", True, 4)]
+    assert [(c.sequence, c.circular, c.edges) for c in contigs] == [("ATGC", True, 4)]
     assert contigs[0].mean_multiplicity == 2.5
-    assert contigs[0].length < len(read)
+    assert contigs[0].length == 4 < len(read)
 
 
 def test_contigs_are_numbered_in_a_stable_order():
@@ -246,10 +265,10 @@ print(json.dumps([(c.id, c.length, c.sequence) for c in got]))
 
 
 def test_equal_cycles_are_numbered_the_same_in_two_processes():
-    # Each read is a 4-edge cycle spelled from its smallest node: ACG gives ACGTACG and
-    # AACC's smallest node AAC gives AACCAAC; both have length 7, so the tie goes by
-    # sequence: AACCAAC is contig 1. Seeds 1 and 4 gave opposite orders before the fix.
-    expected = [(1, 7, "AACCAAC"), (2, 7, "ACGTACG")]
+    # Each read is a 4-edge cycle written once as its circle: ACGTACGT is ACGT and AACCAACC
+    # is AACC; both have length 4, so the tie goes by sequence: AACC is contig 1. Seeds 1 and
+    # 4 gave opposite orders before the fix.
+    expected = [(1, 4, "AACC"), (2, 4, "ACGT")]
     for seed in ("1", "4"):
         env = child_env() | {
             "PYTHONHASHSEED": seed,
@@ -279,23 +298,180 @@ def test_a_contig_and_its_twin_are_kept_once_and_a_palindrome_is_kept_once():
     own = count_kmers(brute_kmers(["ATGCAT"], 6, True))
     pal = extract_contigs(build_assembly_graph(own), 6, both_strands=True)
     assert [(c.sequence, c.strand) for c in pal] == [("ATGCAT", "smaller-of-pair")]
-    # A cycle that is its own reverse complement: ACGT read round the cycle is ACGT again.
-    # Its k-mers are ACG, CGT, GTA, TAC, and the reverse strand gives the same four.
+    # A cycle that is its own reverse complement: the circle ACGT is ACGT again when reversed
+    # and complemented. Its k-mers are ACG, CGT, GTA, TAC, and the reverse strand gives the
+    # same four.
     ring = count_kmers(brute_kmers(["ACGTAC"], 3, True))
     cyc = extract_contigs(build_assembly_graph(ring), 3, both_strands=True)
-    assert [(c.sequence, c.circular, c.strand) for c in cyc] == [
-        ("ACGTAC", True, "smaller-of-pair")
-    ]
+    assert [(c.sequence, c.circular, c.strand) for c in cyc] == [("ACGT", True, "smaller-of-pair")]
     # A cycle that is its own reverse complement only up to rotation. GATCGA at k=3 has
     # k-mers GAT, ATC, TCG, CGA; their reverse complements ATC, GAT, CGA, TCG are the same
-    # four. Nodes GA, AT, TC, CG form one cycle, read from its least node AT: ATCGAT. One
-    # turn is ATCG; its reverse complement is CGAT, a rotation of ATCG but not equal to it.
+    # four. Nodes GA, AT, TC, CG form one cycle whose circle is ATCG (its least rotation);
+    # the reverse complement of ATCG is CGAT, a rotation of ATCG but not equal to it.
     # TCGATCG at k=4 has TCGA, CGAT, GATC, ATCG; reverse complements TCGA, ATCG, GATC, CGAT
-    # are the same four. Nodes TCG, CGA, GAT, ATC, read from ATC: ATCGATC; the turn is ATCG
-    # again (rc CGAT).
-    for read, k, expected in (("GATCGA", 3, "ATCGAT"), ("TCGATCG", 4, "ATCGATC")):
+    # are the same four, and the circle is ATCG again (rc CGAT).
+    for read, k, expected in (("GATCGA", 3, "ATCG"), ("TCGATCG", 4, "ATCG")):
         twisted = count_kmers(brute_kmers([read], k, True))
         got = extract_contigs(build_assembly_graph(twisted), k, both_strands=True)
         assert [(c.sequence, c.circular, c.strand) for c in got] == [
             (expected, True, "smaller-of-pair")
         ]
+
+
+# --- a cycle is its circle, written once ------------------------------------------------------
+
+
+@pytest.mark.parametrize("both", [False, True], ids=["one-strand", "both-strands"])
+@pytest.mark.parametrize(
+    ("read", "k", "circle"),
+    [
+        ("AAAAAAAA", 3, "A"),  # a homopolymer: one letter
+        ("ATGCATGCATGC", 3, "ATGC"),  # a tandem repeat: shorter than the input
+        ("ACACACACAC", 5, "AC"),  # n = 2, below k - 1 = 4
+        ("ACGTAC", 3, "ACGT"),  # its own reverse complement
+        ("GATCGA", 3, "ATCG"),  # its reverse complement CGAT is another rotation
+        ("TCGATCG", 4, "ATCG"),
+    ],
+)
+def test_a_cycle_is_its_circle_written_once(read, k, circle, both):
+    # the letter count must not be mistakable for the read's, nor for the k-1 letters a cycle
+    # used to repeat at its end
+    assert len(circle) not in (len(read), k - 1)
+    (contig,) = _contigs([read], k, both)
+    assert (contig.sequence, contig.circular) == (circle, True)
+    assert contig.length == contig.edges == len(circle)
+
+
+def _expected_circle(unit: str, both: bool) -> str:
+    """The least rotation of the circle, or with both strands the smaller of that and the least
+    rotation of its reverse complement."""
+    least = _least(unit)
+    return min(least, _least(revcomp(unit))) if both else least
+
+
+def _distinct_circle(n: int, k: int, both: bool, seed: int) -> str:
+    """n letters whose n cyclic (k-1)-mers are all different (and, with both strands, differ from
+    their reverse complements), so that the reads are one cycle of n k-mers."""
+    for attempt in range(500):
+        unit = random_dna(n, seed * 1000 + attempt)
+        ring = unit * (k // n + 2)
+        nodes = {ring[i : i + k - 1] for i in range(n)}
+        if len(nodes) == n and not (both and nodes & {revcomp(x) for x in nodes}):
+            return unit
+    raise AssertionError(f"no circle of {n} letters for k={k}, both strands {both}")
+
+
+@pytest.mark.parametrize("seed", range(120))
+def test_a_cycle_matches_a_brute_force_circle(seed):
+    rng = random.Random(seed)
+    n, both = rng.randint(1, 20), bool(rng.getrandbits(1))
+    # k - 1 letters give 4 ** (k - 1) different (k-1)-mers: room for n of them, with spare
+    k = rng.randint(next(k for k in range(2, 9) if 4 ** (k - 1) >= 4 * n), 8)
+    unit = _distinct_circle(n, k, both, seed)
+    read = unit * ((n + k - 1) // n + 1)  # the circle written round, long enough for every k-mer
+    contigs = _contigs([read], k, both)
+    assert [(c.sequence, c.circular, c.length, c.edges) for c in contigs] == [
+        (_expected_circle(unit, both), True, n, n)
+    ]
+
+
+def test_oracle_rejects_a_rotation_that_is_not_the_least():
+    assert _least("TGCA") == "ATGC" != "TGCA"
+    assert _expected_circle("ATGC", False) != "CATG"
+    # TTTA: least rotation ATTT; its reverse complement TAAA has the smaller least rotation AAAT
+    assert _expected_circle("TTTA", False) == "ATTT"
+    assert _expected_circle("TTTA", True) == "AAAT"
+
+
+# --- the metrics count a cycle by its circle, and the mean is over k-mers ----------------------
+
+
+def _direct_mean(contigs, counts: dict[str, int], k: int) -> float:
+    """Times seen over distinct k-mers, from the k-mers the contigs spell and the counts."""
+    seen = [counts[w] for c in contigs for w in _windows(c.sequence, k, c.circular)]
+    return sum(seen) / len(seen)
+
+
+def test_metrics_count_a_cycle_by_its_circle():
+    reads = ["ATGCATGCATGC", "AACCGGTT"]  # no 2-mer shared: a cycle ATGC and a line AACCGGTT
+    contigs = _contigs(reads, 3, False)
+    m = assembly_metrics(contigs)
+    assert [(c.sequence, c.circular, c.edges, c.kmer_count) for c in contigs] == [
+        ("AACCGGTT", False, 6, 6),
+        ("ATGC", True, 4, 10),
+    ]
+    # the quantities that could be swapped are all different
+    assert len({m.total_length, m.longest, m.shortest, m.mean_length}) == 4
+    assert (m.total_length, m.longest, m.shortest, m.mean_length) == (12, 8, 4, 6.0)
+    assert (m.n50, m.l50, m.n90) == (8, 1, 4)
+    assert m.gc == 6 / 12  # G and C over the 12 letters of both contigs
+    # 16 k-mers seen over 10 distinct k-mers, not the mean of the contig means
+    assert m.mean_multiplicity == 16 / 10
+    assert m.mean_multiplicity != statistics.mean(c.mean_multiplicity for c in contigs) == 1.75
+
+
+def test_oracle_rejects_the_mean_of_contig_means():
+    reads = ["ATGCATGCATGC", "AACCGGTT"]
+    counts = count_kmers(brute_kmers(reads, 3, False))
+    contigs = _contigs(reads, 3, False)
+    assert _direct_mean(contigs, counts, 3) == 1.6
+    assert _direct_mean(contigs, counts, 3) != 1.75
+
+
+def _mean_case(seed: int):
+    rng = random.Random(seed)
+    alphabet = ("AC", "ACG", "ACGT")[seed % 3]
+    k = rng.randint(2, 5)
+    reads = []
+    for _ in range(rng.randint(1, 4)):
+        chunk = "".join(rng.choice(alphabet) for _ in range(rng.randint(k, k + 10)))
+        reads.append(chunk * rng.choice((1, 3)))  # three turns of a chunk can close a cycle
+    return reads, k, bool(rng.getrandbits(1)), rng.randint(1, 3)
+
+
+def test_mean_multiplicity_is_total_kmer_count_over_total_edges():
+    cycles = differing = 0
+    for seed in range(150):
+        reads, k, both, minimum = _mean_case(seed)
+        counts = count_kmers(brute_kmers(reads, k, both))
+        ag, _ = filter_min_multiplicity(build_assembly_graph(counts), minimum)
+        contigs = extract_contigs(ag, k, both_strands=both)
+        if not contigs:
+            continue
+        mean = assembly_metrics(contigs).mean_multiplicity
+        assert mean == pytest.approx(_direct_mean(contigs, counts, k))
+        cycles += any(c.circular for c in contigs)
+        differing += mean != pytest.approx(statistics.mean(c.mean_multiplicity for c in contigs))
+    # not vacuous: the inputs hold cycles, and the two ways of averaging differ on some
+    assert cycles >= 10 and differing >= 10
+
+
+# --- the links of a cycle and of a contig whose ends overlap ------------------------------------
+
+
+@pytest.mark.parametrize("both", [False, True], ids=["one-strand", "both-strands"])
+@pytest.mark.parametrize(
+    ("read", "k"),
+    [
+        ("ACACACACAC", 5),  # n = 2 is below k - 1 = 4
+        ("ATGCATGCATGC", 3),  # n = 4 is above k - 1 = 2
+        ("ACGTAC", 3),  # its own reverse complement
+    ],
+)
+def test_a_cycle_has_one_self_link_and_no_other(read, k, both):
+    contigs = _contigs([read], k, both)
+    assert [c.circular for c in contigs] == [True]
+    assert gfa_links(contigs, k, both) == [(1, "+", 1, "+")]
+
+
+def test_a_contig_whose_ends_overlap_links_to_itself():
+    contigs = _contigs(["AACGTAA", "AAG"], 3, False)
+    assert [(c.id, c.sequence, c.circular) for c in contigs] == [
+        (1, "AACGTAA", False),
+        (2, "AAG", False),
+    ]
+    seqs = {c.id: c.sequence for c in contigs}
+    # every pair of contigs whose last 2 letters equal the other's first 2, tried one by one
+    pairs = {(a, "+", b, "+") for a, s in seqs.items() for b, t in seqs.items() if s[-2:] == t[:2]}
+    assert pairs == {(1, "+", 1, "+"), (1, "+", 2, "+")}
+    assert set(gfa_links(contigs, 3, False)) == pairs

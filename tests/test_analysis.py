@@ -90,7 +90,8 @@ def test_analyze_matches_independent_counts(both_strands, unique):
         # ATGCATGCATGC at k=3: ATG and TGC three times, GCA and CAT twice, 10 edges over
         # AT, TG, GC, CA. AT has out 3 and in 2, GC has out 2 and in 3, so it is a path
         # (not a circuit) and one trail spells the input. The assembly graph is the cycle
-        # AT -> TG -> GC -> CA -> AT, read from its smallest node AT: ATGCAT, circular. The
+        # AT -> TG -> GC -> CA -> AT, written once as its circle of 4 letters, the first
+        # letter of each k-mer (A, T, G, C) in cycle order: ATGC, circular. The
         # multiplicities 3, 3, 2, 2 give mean 10 / 4 = 2.5. The one trail starts at AT and
         # ends at GC.
         (
@@ -99,7 +100,7 @@ def test_analyze_matches_independent_counts(both_strands, unique):
             10,
             ("ATGCATGCATGC",),
             "Eulerian path · 10 edges · 4 nodes",
-            [("ATGCAT", True, 2.5)],
+            [("ATGC", True, 2.5)],
             [("AT", "trail start"), ("CA", ""), ("GC", "trail end"), ("TG", "")],
         ),
     ],

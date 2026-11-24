@@ -132,18 +132,18 @@ def test_oracle_rejects_a_shifted_column():
 # The worked case: the read ATGCATGCATGC at k=3, by hand.
 #   k-mers: ATG TGC GCA CAT ATG TGC GCA CAT ATG TGC, ten in all; ATG and TGC are seen 3 times,
 #   GCA and CAT twice, so 4 distinct k-mers. They close a cycle AT-TG-GC-CA, one circular contig
-#   ATGCAT: length 6 (k-1 plus 4 edges minus the 2 shared), edges 4, k-mer count 10,
-#   mean multiplicity 10/4 = 2.5, minimum 2, GC 2/6 (G and C of ATGCAT) = 0.3333. It has no ORF
-#   (no stop codon). One contig makes every length measure 6 and l50 1; mean length 6.
+#   written once as its circle ATGC: length 4, edges 4, k-mer count 10, mean multiplicity
+#   10/4 = 2.5, minimum 2, GC 2/4 (G and C of ATGC) = 0.5000. It has no ORF (no stop codon).
+#   One contig makes every length measure 4 and l50 1; mean length 4.
 _WORKED_CONTIGS = [
     (
         "1",
-        "6",
+        "4",
         "4",
         "10",
         "2.5000",
         "2",
-        "0.3333",
+        "0.5000",
         "0",
         "yes",
         "no",
@@ -152,14 +152,14 @@ _WORKED_CONTIGS = [
 ]
 _WORKED_ASSEMBLY = [
     ("contigs", "1"),
-    ("total length", "6"),
-    ("longest", "6"),
-    ("shortest", "6"),
-    ("mean length", "6.0000"),
-    ("n50", "6"),
+    ("total length", "4"),
+    ("longest", "4"),
+    ("shortest", "4"),
+    ("mean length", "4.0000"),
+    ("n50", "4"),
     ("l50", "1"),
-    ("n90", "6"),
-    ("gc", "0.3333"),
+    ("n90", "4"),
+    ("gc", "0.5000"),
     ("mean multiplicity", "2.5000"),
     ("distinct k-mers", "4"),
     ("total k-mers", "10"),

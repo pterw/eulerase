@@ -45,7 +45,7 @@ def _three_reads_with_orfs() -> Analysis:
 
 
 def _repeat() -> Analysis:
-    return _analysis(["ATGCATGCATGC"], k=3)  # one circular contig, ATGCAT
+    return _analysis(["ATGCATGCATGC"], k=3)  # one circular contig, ATGC
 
 
 def _ten_copies() -> Analysis:
@@ -160,8 +160,9 @@ def _first_difference(expected: str, actual: str) -> int | None:
 # orfs=0 and, because the input is DNA, the ORF rule follows the settings.
 #
 # The repeat ATGCATGCATGC at k=3: ATG and TGC three times, GCA and CAT twice. One circular
-# contig ATGCAT: length 6; edges 4; mean multiplicity (3 + 3 + 2 + 2) / 4 = 2.5 -> "2.5000";
-# gc = 2 / 6 = 0.3333; no stop codon in ATGCAT, orfs=0.
+# contig ATGC (the circle written once); length 4; edges 4; mean multiplicity
+# (3 + 3 + 2 + 2) / 4 = 2.5 -> "2.5000"; gc = 2 / 4 = 0.5 -> "0.5000"; no stop codon in ATGC,
+# orfs=0.
 #
 # FASTA: ">" id, one space, the description, newline, the sequence (under 60 letters, one
 # line), newline. GenBank: LOCUS columns per the GenBank flat file: name from column 13,
@@ -177,17 +178,15 @@ _RULE = (
     "an ORF is a reading frame, not evidence of a gene."
 )
 _TEN_FASTA = f">ctg1 len=4 mean_multiplicity=10.0000 gc=0.5000 orfs=0 {_SETTINGS} {_RULE}\nATGC\n"
-_REPEAT_FASTA = (
-    f">ctg1 len=6 mean_multiplicity=2.5000 gc=0.3333 orfs=0 {_SETTINGS} {_RULE}\nATGCAT\n"
-)
+_REPEAT_FASTA = f">ctg1 len=4 mean_multiplicity=2.5000 gc=0.5000 orfs=0 {_SETTINGS} {_RULE}\nATGC\n"
 # GFA: the H line with the settings; one S line per contig with LN (length) and KC (the sum of
 # the multiplicities of the contig's k-mers); one L line per overlap of k - 1 = 2 letters.
 # Ten copies: LN 4, 2 distinct k-mers, KC 10 + 10 = 20, mean 10: all different; no link.
-# The repeat: LN 6, 4 distinct k-mers, KC 3 + 3 + 2 + 2 = 10, mean 2.5; the circular contig
-# ATGCAT ends in AT where it begins, so it links to itself.
+# The repeat: LN 4, 4 distinct k-mers, KC 3 + 3 + 2 + 2 = 10, mean 2.5; the circular contig
+# ATGC has the one link to itself (the writer gives every link k - 1 = 2 letters for now).
 _TEN_GFA = f"H\tVN:Z:1.0\tst:Z:{_SETTINGS}\nS\tctg1\tATGC\tLN:i:4\tKC:i:20\n"
 _REPEAT_GFA = (
-    f"H\tVN:Z:1.0\tst:Z:{_SETTINGS}\nS\tctg1\tATGCAT\tLN:i:6\tKC:i:10\nL\tctg1\t+\tctg1\t+\t2M\n"
+    f"H\tVN:Z:1.0\tst:Z:{_SETTINGS}\nS\tctg1\tATGC\tLN:i:4\tKC:i:10\nL\tctg1\t+\tctg1\t+\t2M\n"
 )
 _TEN_GENBANK = "\n".join(
     [
@@ -219,8 +218,8 @@ _TEN_GENBANK = "\n".join(
 )
 _REPEAT_GENBANK = "\n".join(
     [
-        "LOCUS       ctg1                       6 bp    DNA     circular UNK 01-JAN-1980",
-        "DEFINITION  len=6 mean_multiplicity=2.5000 gc=0.3333 orfs=0 k=3; both strands:",
+        "LOCUS       ctg1                       4 bp    DNA     circular UNK 01-JAN-1980",
+        "DEFINITION  len=4 mean_multiplicity=2.5000 gc=0.5000 orfs=0 k=3; both strands:",
         "            no; set of k-mers: no; minimum multiplicity: none; tip clipping: no",
         "            ORFs: start codon ATG, standard genetic code, at least 25 amino",
         "            acids, the longest per stop codon, ending in a stop codon (none read",
@@ -240,7 +239,7 @@ _REPEAT_GENBANK = "\n".join(
         "            evidence of a gene.",
         "FEATURES             Location/Qualifiers",
         "ORIGIN",
-        "        1 atgcat",
+        "        1 atgc",
         "//",
         "",
     ]
@@ -293,11 +292,11 @@ _REPEAT_CSV = {
     "Trails": "trail,edges,sequence\n1,10,ATGCATGCATGC\n",
     "Contigs": (
         "contig,length,edges,k-mer count,mean multiplicity,min multiplicity,gc,orfs,circular,"
-        "has n,strand\n1,6,4,10,2.5000,2,0.3333,0,yes,no,as-assembled\n"
+        "has n,strand\n1,4,4,10,2.5000,2,0.5000,0,yes,no,as-assembled\n"
     ),
     "Assembly": (
-        "measure,value\ncontigs,1\ntotal length,6\nlongest,6\nshortest,6\nmean length,6.0000\n"
-        "n50,6\nl50,1\nn90,6\ngc,0.3333\nmean multiplicity,2.5000\ndistinct k-mers,4\n"
+        "measure,value\ncontigs,1\ntotal length,4\nlongest,4\nshortest,4\nmean length,4.0000\n"
+        "n50,4\nl50,1\nn90,4\ngc,0.5000\nmean multiplicity,2.5000\ndistinct k-mers,4\n"
         "total k-mers,10\nremoved k-mers,0\nclipped branches,0\nclipped k-mers,0\n"
     ),
 }
@@ -396,20 +395,19 @@ def _canonical(link: tuple) -> tuple:
 
 
 def _brute_links(contigs: dict[int, tuple[str, bool]], k: int, both: bool) -> list[tuple]:
-    """Every oriented pair of contigs whose end and start share k-1 letters, found by trying all
-    pairs. A contig links to itself only when it is circular. Mirror images are one link."""
+    """Every oriented pair of contigs that are not cycles whose end and start share k-1 letters,
+    found by trying all pairs; a contig links to itself by this rule like any other. A cycle
+    takes part in no such pair and has exactly one link, to itself, (id, "+", id, "+"), with both
+    strands too. Mirror images are one link."""
     oriented = [
         (cid, o, seq if o == "+" else revcomp(seq))
-        for cid, (seq, _) in contigs.items()
+        for cid, (seq, cycle) in contigs.items()
+        if not cycle
         for o in ("+-" if both else "+")
     ]
     n = k - 1
-    found = [
-        (a, ao, b, bo)
-        for a, ao, s in oriented
-        for b, bo, t in oriented
-        if s[-n:] == t[:n] and ((a, ao) != (b, bo) or contigs[a][1])
-    ]
+    found = [(a, ao, b, bo) for a, ao, s in oriented for b, bo, t in oriented if s[-n:] == t[:n]]
+    found += [(cid, "+", cid, "+") for cid, (_, cycle) in contigs.items() if cycle]
     first = {}
     for link in found:
         first.setdefault(_canonical(link), link)
@@ -473,7 +471,7 @@ def test_gfa_round_trip(i):
 
 
 def test_a_circular_contig_links_to_itself():
-    # ATGCATGCATGC at k=3 is the one circular contig ATGCAT; its end AT is its start AT
+    # ATGCATGCATGC at k=3 is the one circular contig ATGC, which has one link, to itself
     _, segments, links = _parse_gfa(gfa_text(_repeat()))
     assert [name for name, _, _ in segments] == ["ctg1"]
     assert links == [("ctg1", "+", "ctg1", "+", "2M")]
@@ -482,14 +480,14 @@ def test_a_circular_contig_links_to_itself():
 def test_oracle_rejects_a_wrong_gfa_link():
     k = 3  # an overlap of 2 letters
     contigs = {
-        1: ("ACGTAC", False),  # ends AC like the start of 2 and 4, but is linear: no self link
+        1: ("ACGTAC", False),  # ends AC like the start of 2 and 4, and where it begins: self link
         2: ("ACGG", False),
         3: ("GGAT", False),
         4: ("ATAC", False),
-        5: ("CCTCC", True),  # circular: its end CC is its start CC
+        5: ("CCTCC", True),  # a cycle: no overlap link, its one link is to itself
     }
-    right = [(1, "+", 2, "+"), (2, "+", 3, "+"), (3, "+", 4, "+"), (4, "+", 1, "+")]
-    right += [(4, "+", 2, "+"), (5, "+", 5, "+")]
+    right = [(1, "+", 1, "+"), (1, "+", 2, "+"), (2, "+", 3, "+"), (3, "+", 4, "+")]
+    right += [(4, "+", 1, "+"), (4, "+", 2, "+"), (5, "+", 5, "+")]
     assert _brute_links(contigs, k, False) == right
     assert _brute_links(contigs, k, False) != [(1, "+", 2, "+"), (2, "+", 3, "+")]
     # with both strands, ACG (reverse complement CGT) and CGA (reverse complement TCG)
@@ -498,14 +496,15 @@ def test_oracle_rejects_a_wrong_gfa_link():
 
 
 def test_gfa_segments_carry_ln_and_kc():
-    reads = ["ATGCATGCATGC"]
+    reads = ["ACGTT", "ACGTT"]  # one linear contig ACGTT: ACG, CGT and GTT seen twice each
     a = _analysis(reads, k=3)
     (contig,) = a.contigs
     counts = Counter(brute_kmers(reads, 3, False))
     kmers = [contig.sequence[i : i + 3] for i in range(len(contig.sequence) - 2)]
     kc = sum(counts[m] for m in kmers)
     # the numbers a tag could mix up are all different: length, distinct k-mers, sum, rounded mean
-    assert [contig.length, len(set(kmers)), kc, round(contig.mean_multiplicity)] == [6, 4, 10, 2]
+    assert [contig.length, len(set(kmers)), kc, round(contig.mean_multiplicity)] == [5, 3, 6, 2]
+    assert not contig.circular
     ((_, _, tags),) = _parse_gfa(gfa_text(a))[1]
     assert {name: value for name, value in tags.items() if name != "LN"} == {"KC": str(kc)}
 
