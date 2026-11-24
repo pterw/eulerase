@@ -85,8 +85,15 @@ def test_each_input_form_gives_the_same_trails(tmp_path, capsys):
         ["--seq", ""],
         ["--seq", "HELLO", "--both-strands"],
         ["--kmers", "ACG", "TGC", "-k", "3"],
+        ["--file", ""],
     ],
-    ids=["k-too-small", "empty-sequence", "both-strands-not-dna", "k-given-with-kmers"],
+    ids=[
+        "k-too-small",
+        "empty-sequence",
+        "both-strands-not-dna",
+        "k-given-with-kmers",
+        "empty-file-path",
+    ],
 )
 def test_a_failure_is_one_line_on_stderr_and_exit_1(argv, capsys):
     code, out, err = _run(capsys, *argv)
@@ -131,14 +138,6 @@ def test_no_arguments_and_gui_print_the_not_built_message(argv, capsys):
     assert (code, out, err) == (1, "", _NOT_BUILT)
 
 
-def test_an_empty_file_path_reaches_the_reader_not_the_not_built_message(capsys):
-    code, out, err = _run(capsys, "--file", "")
-    assert code == 1
-    assert out == ""
-    assert err.startswith("eulerase: ")
-    assert err != "eulerase: " + _NOT_BUILT
-
-
 def test_an_error_that_is_not_a_eulerase_error_is_not_hidden(monkeypatch):
     def broken(records, settings):
         raise RuntimeError("a bug, not a user mistake")
@@ -161,7 +160,7 @@ def test_the_filter_options_reach_the_analysis(monkeypatch, flags, field, expect
 
     def spy(records, settings):
         seen.append(settings)
-        return SimpleNamespace(headline="", trails=[], spelled=[])
+        return SimpleNamespace(headline="", trails=[], spelled=[], notes=())
 
     monkeypatch.setattr(cli, "analyze", spy)
     assert cli.main(["--seq", "ACGTAC"]) == 0

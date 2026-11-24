@@ -5,7 +5,7 @@ import sys
 from collections.abc import Sequence
 
 from eulerase import io
-from eulerase.analysis import DEFAULT_K, Settings, analyze
+from eulerase.analysis import DEFAULT_K, Analysis, Settings, analyze, format_cell, rows
 from eulerase.errors import EuleraseError
 from eulerase.sequence import Record, parse_kmer_list, parse_records
 
@@ -68,7 +68,8 @@ def _parser() -> argparse.ArgumentParser:
         help="before the contigs are built, remove short dead-end branches (under 2k k-mers) "
         "when another branch from the same node is seen more often on average (default off). "
         "For a set of reads this "
-        "removes sequencing errors; it can also remove the true end of a sequence",
+        "removes sequencing errors; it can also remove the true end of a sequence. "
+        "It removes dead ends, not bubbles: for reads, also give --min-count.",
     )
     p.add_argument("--figure", metavar="PATH", help="write the graph as a png, svg or pdf figure")
     p.add_argument("--csv", metavar="PREFIX", help="write the tables as PREFIX_<table>.csv files")
@@ -112,6 +113,21 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(f"eulerase: {err}", file=sys.stderr)
         return 1
     print(result.headline)
+    for note in result.notes:
+        print(f"Note: {note}")
     for i, (trail, spelled) in enumerate(zip(result.trails, result.spelled, strict=True), 1):
         print(f"trail {i} ({len(trail)} edges): {spelled}")
+    if args.metrics:
+        _print_metrics(result)
     return 0
+
+
+def _print_metrics(result: Analysis) -> None:
+    for measure, value in rows(result, "Assembly"):
+        print(f"{measure}: {value}")
+    for contig in result.contigs:
+        print(
+            f"contig {contig.id} length {contig.length} "
+            f"multiplicity {format_cell(contig.mean_multiplicity)} "
+            f"cycle {format_cell(contig.circular)}"
+        )
