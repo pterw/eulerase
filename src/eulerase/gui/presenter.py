@@ -4,8 +4,9 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Protocol
 
-from eulerase import analysis
-from eulerase.analysis import Analysis
+from eulerase import analysis, kmers, sequence
+from eulerase.analysis import Analysis, Settings
+from eulerase.errors import EuleraseError
 from eulerase.sequence import Record
 
 EMPTY = "empty"
@@ -21,6 +22,7 @@ MIN_WINDOW = (900, 560)
 SCREEN_ALLOWANCE = (0, 120)
 
 _TEXT_MEASURES = ("settings", "orf rule")
+_CONTIG_EXPORTS = ("fasta", "genbank", "gfa")
 
 
 @dataclass(frozen=True)
@@ -229,3 +231,145 @@ def fit_window(screen_width: int, screen_height: int) -> tuple[int, int]:
             MIN_WINDOW, DEFAULT_WINDOW, (screen_width, screen_height), SCREEN_ALLOWANCE, strict=True
         )
     )
+
+
+def _whole_number(text: str, what: str) -> int:
+    try:
+        return int(text)  # int() already ignores spaces around the digits
+    except ValueError:
+        raise EuleraseError(
+            f"{what} must be a whole number, not {text.strip()!r}; type digits only."
+        ) from None
+
+
+def _settings(form: FormValues) -> Settings:
+    minimum = form.min_multiplicity_text.strip()
+    common = {
+        "both_strands": form.both_strands,
+        "unique": form.unique,
+        "min_multiplicity": _whole_number(minimum, "The minimum multiplicity") if minimum else None,
+        "clip_tips": form.clip_tips,
+        "input_mode": form.input_mode,
+    }
+    if form.input_mode == "kmers":  # k comes from the k-mers; the box is never read
+        return Settings(k=None, **common)
+    return Settings(k=kmers.validate_k(_whole_number(form.k_text, "k")), **common)
+
+
+def _records(form: FormValues) -> list[Record]:
+    parse = sequence.parse_kmer_list if form.input_mode == "kmers" else sequence.parse_records
+    return parse(form.text)
+
+
+class Presenter:
+    """The window's decisions. It reaches the window only through `View`."""
+
+    def __init__(
+        self,
+        view: View,
+        worker: Worker,
+        scheduler: Scheduler,
+        *,
+        layout: Callable[[Analysis, float], object] | None = None,
+    ):
+        self._view = view
+        self._worker = worker
+        self._scheduler = scheduler
+        self._layout = layout or (lambda a, aspect: None)
+        self._phase = EMPTY
+        self._analysis: Analysis | None = None
+        self._step = 0
+        self._total = 0
+        self._token = 0
+
+    @property
+    def phase(self) -> str:
+        return self._phase
+
+    @property
+    def analysis(self) -> Analysis | None:
+        return self._analysis
+
+    @property
+    def step(self) -> int:
+        return self._step
+
+    @property
+    def total(self) -> int:
+        return self._total
+
+    def mode_changed(self, input_mode: str) -> None:
+        self._view.set_k_enabled(input_mode == "sequences")
+
+    def build(self) -> None:
+        form = self._view.read_form()
+        aspect = self._view.canvas_aspect()
+        try:
+            settings, records = _settings(form), _records(form)
+        except EuleraseError as error:
+            self._fail(str(error))
+            return
+        self._token += 1  # abandons any build still running
+        self._clear_result()
+        self._phase = BUSY
+        self._view.show_busy(True)
+        self._worker.start(self._job(records, settings, aspect, self._token))
+
+    def stop(self) -> None:
+        if self._phase != BUSY:
+            return
+        self._token += 1
+        self._phase = EMPTY
+        self._view.show_busy(False)
+        self._view.show_status("Stopped.")
+
+    def on_build_outcome(self, outcome: BuildOutcome) -> None:
+        if outcome.token != self._token or self._phase != BUSY:
+            return
+        if outcome.error is not None:
+            self._fail(outcome.error)
+            return
+        result = result_view(outcome.analysis, outcome.layout)
+        self._analysis = outcome.analysis
+        self._phase = READY
+        self._step = self._total = result.steps
+        self._view.show_result(result)
+        self._view.show_step(self._total, self._total)
+        self._view.show_busy(False)
+        self._view.set_playing(False)
+        has_contigs = bool(outcome.analysis.contigs)
+        self._view.set_exports_enabled(
+            {kind: has_contigs or kind not in _CONTIG_EXPORTS for kind in EXPORT_KINDS}
+        )
+        self._view.show_status(result.status)
+
+    def _job(
+        self, records: list[Record], settings: Settings, aspect: float, token: int
+    ) -> Callable[[], BuildOutcome]:
+        layout = self._layout
+
+        def job() -> BuildOutcome:
+            try:
+                a = analysis.analyze(records, settings)
+                return BuildOutcome(token, a, layout(a, aspect), None)
+            except EuleraseError as error:
+                return BuildOutcome(token, None, None, str(error))
+            except Exception as error:  # the busy state must always end
+                message = (
+                    f"The build failed with a {type(error).__name__}: this is a bug in Eulerase."
+                )
+                return BuildOutcome(token, None, None, message)
+
+        return job
+
+    def _clear_result(self) -> None:
+        self._analysis = None
+        self._step = self._total = 0
+        self._view.clear_result()
+        self._view.set_exports_enabled(dict.fromkeys(EXPORT_KINDS, False))
+
+    def _fail(self, message: str) -> None:
+        self._phase = EMPTY
+        self._clear_result()
+        self._view.show_busy(False)
+        self._view.show_status(message, error=True)
