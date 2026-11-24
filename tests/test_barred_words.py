@@ -20,7 +20,6 @@ def _filtered():
     return a
 
 
-@pytest.mark.xfail(strict=True, reason="R3: coverage wording")
 def test_no_output_names_a_count_as_coverage_or_depth():
     a = _filtered()
     texts = [fasta_text(a), genbank_text(a), *a.notes]

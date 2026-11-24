@@ -267,7 +267,7 @@ def _notes(
         notes.append(f"Set of k-mers: {found.duplicates_dropped} repeated occurrence(s) dropped.")
     if removed:
         notes.append(
-            f"Removed {removed} low-coverage edge(s) (coverage < {settings.min_multiplicity})."
+            f"Removed {removed} distinct k-mers seen fewer than {settings.min_multiplicity} times."
         )
     if branches:
         notes.append(

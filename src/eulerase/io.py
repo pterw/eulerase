@@ -96,7 +96,8 @@ def _seqrecords(a: Analysis) -> list[SeqRecord]:
         count = format_cell(None if orf_list is None else len(orf_list))
         description = " ".join(
             [
-                f"len={format_cell(contig.length)} cov={format_cell(contig.mean_multiplicity)}x",
+                f"len={format_cell(contig.length)}",
+                f"mean_multiplicity={format_cell(contig.mean_multiplicity)}",
                 f"gc={format_cell(contig.gc)} orfs={count}",
                 settings,
                 *rule,

@@ -174,8 +174,10 @@ _RULE = (
     "ORFs start at ATG, use the standard genetic code, end at a stop codon "
     "and are at least 10 amino acids long."
 )
-_TEN_FASTA = f">ctg1 len=4 cov=10.0000x gc=0.5000 orfs=0 {_SETTINGS} {_RULE}\nATGC\n"
-_REPEAT_FASTA = f">ctg1 len=6 cov=2.5000x gc=0.3333 orfs=0 {_SETTINGS} {_RULE}\nATGCAT\n"
+_TEN_FASTA = f">ctg1 len=4 mean_multiplicity=10.0000 gc=0.5000 orfs=0 {_SETTINGS} {_RULE}\nATGC\n"
+_REPEAT_FASTA = (
+    f">ctg1 len=6 mean_multiplicity=2.5000 gc=0.3333 orfs=0 {_SETTINGS} {_RULE}\nATGCAT\n"
+)
 # GFA: the H line with the settings; one S line per contig with LN (length) and KC (the sum of
 # the multiplicities of the contig's k-mers); one L line per overlap of k - 1 = 2 letters.
 # Ten copies: LN 4, 2 distinct k-mers, KC 10 + 10 = 20, mean 10: all different; no link.
@@ -188,10 +190,10 @@ _REPEAT_GFA = (
 _TEN_GENBANK = "\n".join(
     [
         "LOCUS       ctg1                       4 bp    DNA     linear   UNK 01-JAN-1980",
-        "DEFINITION  len=4 cov=10.0000x gc=0.5000 orfs=0 k=3; both strands: no; set of",
-        "            k-mers: no; minimum multiplicity: none; tip clipping: no ORFs start",
-        "            at ATG, use the standard genetic code, end at a stop codon and are",
-        "            at least 10 amino acids long..",
+        "DEFINITION  len=4 mean_multiplicity=10.0000 gc=0.5000 orfs=0 k=3; both strands:",
+        "            no; set of k-mers: no; minimum multiplicity: none; tip clipping: no",
+        "            ORFs start at ATG, use the standard genetic code, end at a stop",
+        "            codon and are at least 10 amino acids long..",
         "ACCESSION   ctg1",
         "VERSION     ctg1",
         "KEYWORDS    .",
@@ -212,10 +214,10 @@ _TEN_GENBANK = "\n".join(
 _REPEAT_GENBANK = "\n".join(
     [
         "LOCUS       ctg1                       6 bp    DNA     circular UNK 01-JAN-1980",
-        "DEFINITION  len=6 cov=2.5000x gc=0.3333 orfs=0 k=3; both strands: no; set of",
-        "            k-mers: no; minimum multiplicity: none; tip clipping: no ORFs start",
-        "            at ATG, use the standard genetic code, end at a stop codon and are",
-        "            at least 10 amino acids long..",
+        "DEFINITION  len=6 mean_multiplicity=2.5000 gc=0.3333 orfs=0 k=3; both strands:",
+        "            no; set of k-mers: no; minimum multiplicity: none; tip clipping: no",
+        "            ORFs start at ATG, use the standard genetic code, end at a stop",
+        "            codon and are at least 10 amino acids long..",
         "ACCESSION   ctg1",
         "VERSION     ctg1",
         "KEYWORDS    .",
