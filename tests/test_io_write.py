@@ -166,13 +166,15 @@ def _first_difference(expected: str, actual: str) -> int | None:
 # FASTA: ">" id, one space, the description, newline, the sequence (under 60 letters, one
 # line), newline. GenBank: LOCUS columns per the GenBank flat file: name from column 13,
 # length ending in column 40, "bp" in 42-43, molecule type in 48-50, topology in 56-63, the
-# division UNK in 65-67, the date in 69-79. DEFINITION and COMMENT lines wrap at 79
-# characters on a space, continuation lines indented 12; the writer adds a full stop to the
-# DEFINITION. No features, no ORFs. ORIGIN lines are 9 digits wide, lower-case, in tens.
+# division UNK in 65-67, the date in 69-79. DEFINITION and COMMENT lines wrap at 80
+# characters (the indent included) on a space, continuation lines indented 12; the writer adds
+# a full stop to the DEFINITION. No features, no ORFs. ORIGIN lines are 9 digits wide,
+# lower-case, in tens.
 _SETTINGS = "k=3; both strands: no; set of k-mers: no; minimum multiplicity: none; tip clipping: no"
 _RULE = (
-    "ORFs start at ATG, use the standard genetic code, end at a stop codon "
-    "and are at least 10 amino acids long."
+    "ORFs: start codon ATG, standard genetic code, at least 25 amino acids, the longest per "
+    "stop codon, ending in a stop codon (none read off an end or across a codon with N); "
+    "an ORF is a reading frame, not evidence of a gene."
 )
 _TEN_FASTA = f">ctg1 len=4 mean_multiplicity=10.0000 gc=0.5000 orfs=0 {_SETTINGS} {_RULE}\nATGC\n"
 _REPEAT_FASTA = (
@@ -192,8 +194,10 @@ _TEN_GENBANK = "\n".join(
         "LOCUS       ctg1                       4 bp    DNA     linear   UNK 01-JAN-1980",
         "DEFINITION  len=4 mean_multiplicity=10.0000 gc=0.5000 orfs=0 k=3; both strands:",
         "            no; set of k-mers: no; minimum multiplicity: none; tip clipping: no",
-        "            ORFs start at ATG, use the standard genetic code, end at a stop",
-        "            codon and are at least 10 amino acids long..",
+        "            ORFs: start codon ATG, standard genetic code, at least 25 amino",
+        "            acids, the longest per stop codon, ending in a stop codon (none read",
+        "            off an end or across a codon with N); an ORF is a reading frame, not",
+        "            evidence of a gene..",
         "ACCESSION   ctg1",
         "VERSION     ctg1",
         "KEYWORDS    .",
@@ -202,8 +206,10 @@ _TEN_GENBANK = "\n".join(
         "            .",
         "COMMENT     k=3; both strands: no; set of k-mers: no; minimum multiplicity:",
         "            none; tip clipping: no",
-        "            ORFs start at ATG, use the standard genetic code, end at a stop",
-        "            codon and are at least 10 amino acids long.",
+        "            ORFs: start codon ATG, standard genetic code, at least 25 amino",
+        "            acids, the longest per stop codon, ending in a stop codon (none read",
+        "            off an end or across a codon with N); an ORF is a reading frame, not",
+        "            evidence of a gene.",
         "FEATURES             Location/Qualifiers",
         "ORIGIN",
         "        1 atgc",
@@ -216,8 +222,10 @@ _REPEAT_GENBANK = "\n".join(
         "LOCUS       ctg1                       6 bp    DNA     circular UNK 01-JAN-1980",
         "DEFINITION  len=6 mean_multiplicity=2.5000 gc=0.3333 orfs=0 k=3; both strands:",
         "            no; set of k-mers: no; minimum multiplicity: none; tip clipping: no",
-        "            ORFs start at ATG, use the standard genetic code, end at a stop",
-        "            codon and are at least 10 amino acids long..",
+        "            ORFs: start codon ATG, standard genetic code, at least 25 amino",
+        "            acids, the longest per stop codon, ending in a stop codon (none read",
+        "            off an end or across a codon with N); an ORF is a reading frame, not",
+        "            evidence of a gene..",
         "ACCESSION   ctg1",
         "VERSION     ctg1",
         "KEYWORDS    .",
@@ -226,8 +234,10 @@ _REPEAT_GENBANK = "\n".join(
         "            .",
         "COMMENT     k=3; both strands: no; set of k-mers: no; minimum multiplicity:",
         "            none; tip clipping: no",
-        "            ORFs start at ATG, use the standard genetic code, end at a stop",
-        "            codon and are at least 10 amino acids long.",
+        "            ORFs: start codon ATG, standard genetic code, at least 25 amino",
+        "            acids, the longest per stop codon, ending in a stop codon (none read",
+        "            off an end or across a codon with N); an ORF is a reading frame, not",
+        "            evidence of a gene.",
         "FEATURES             Location/Qualifiers",
         "ORIGIN",
         "        1 atgcat",

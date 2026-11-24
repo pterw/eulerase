@@ -277,11 +277,18 @@ def test_invalid_requests_are_refused(reads, settings):
 
 
 def test_orfs_are_found_per_contig_in_contig_order():
-    # ATG, ten distinct codons (A A A A L L L L G G), TAA: one forward ORF of 11 amino
-    # acids (M plus ten), 36 nt with the stop, from 0 to 36. Its reverse complement holds
-    # no ATG. The second record, shorter than the first, has no ORF of 10 amino acids.
-    gene = "ATGGCTGCCGCAGCGCTGCTACTCCTTGGTGGCTAA"
+    # ATG, 25 distinct sense codons (GCT GCC GCA GCG, CTG CTA CTC CTT, GGT GGC GGA GGG, CCT CCC
+    # CCA CCG, GTT GTC GTA GTG, ACT ACC ACA ACG, TCT) and TAA: no in-frame stop before the end and
+    # no repeated 11-mer, so one forward ORF of 26 amino acids (M, 4 A, 4 L, 4 G, 4 P, 4 V, 4 T,
+    # S), 81 nt with the stop, from 0 to 81. Its reverse complement holds no ORF. The second
+    # record, shorter than the first, has none.
+    gene = (
+        "ATG" + "GCTGCCGCAGCG" + "CTGCTACTCCTT" + "GGTGGCGGAGGG" + "CCTCCCCCACCG"
+        + "GTTGTCGTAGTG" + "ACTACCACAACG" + "TCT" + "TAA"
+    )  # fmt: skip
+    protein = "M" + "AAAA" + "LLLL" + "GGGG" + "PPPP" + "VVVV" + "TTTT" + "S"
     other = "ACGTTGCAAGGCTTAGCCATCCGTACCAGT"
+    assert len(gene) == 81 and len(protein) == 26
     a = analyze(_records(gene, other), Settings(k=12))
     assert [c.sequence for c in a.contigs] == [gene, other]
-    assert a.orfs == ((Orf(1, 1, 0, 36, 36, 11, "MAAAALLLLGG"),), ())
+    assert a.orfs == ((Orf(1, 1, 0, 81, 81, 26, protein),), ())

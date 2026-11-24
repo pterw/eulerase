@@ -1,12 +1,13 @@
 """Six-frame open reading frames: ATG to the first in-frame stop, standard genetic code."""
 
+from collections import deque
 from dataclasses import dataclass
 
 from Bio.Seq import Seq
 
 from eulerase.errors import EuleraseError
 
-MIN_ORF_AA = 10
+MIN_ORF_AA = 25
 _STOPS = ("TAA", "TAG", "TGA")
 
 
@@ -23,49 +24,53 @@ class Orf:
 
 def orf_rule_text() -> str:
     return (
-        f"ORFs start at ATG, use the standard genetic code, end at a stop codon "
-        f"and are at least {MIN_ORF_AA} amino acids long."
+        f"ORFs: start codon ATG, standard genetic code, at least {MIN_ORF_AA} amino acids, "
+        "the longest per stop codon, ending in a stop codon (none read off an end or across a "
+        "codon with N); an ORF is a reading frame, not evidence of a gene."
     )
 
 
-def find_orfs(sequence: str, *, min_aa: int = MIN_ORF_AA) -> tuple[Orf, ...]:
+def _scan_strand(s: str, strand: int, circular: bool, min_aa: int) -> list[Orf]:
+    """ORFs of one strand. A circle is read over 2n + 2 letters and only the stop codons of the
+    second turn are reported, each of which then sees a whole turn behind it."""
+    n = len(s)
+    text = (s * 3)[: 2 * n + 2] if circular else s
+    first_stop = n if circular else 0
+    orfs = []
+    for frame in range(3):
+        atgs = deque()  # ATG positions since the last stop or N codon in this frame
+        for p in range(frame, len(text) - 2, 3):
+            codon = text[p : p + 3]
+            if codon == "ATG":
+                atgs.append(p)
+            elif "N" in codon:
+                atgs.clear()
+            elif codon in _STOPS:
+                while atgs and p + 3 - atgs[0] > n:  # an ORF never uses a letter twice
+                    atgs.popleft()
+                if atgs and p >= first_stop and (p - atgs[0]) // 3 >= min_aa:
+                    orfs.append(_make_orf(text[atgs[0] : p + 3], atgs[0] % n, strand, n))
+                atgs.clear()
+    return orfs
+
+
+def _make_orf(nt: str, first: int, strand: int, n: int) -> Orf:
+    """The ORF whose first letter is at `first` on its own strand; `end` is not reduced modulo n."""
+    protein = str(Seq(nt).translate(to_stop=True))
+    start = first if strand == +1 else (n - first - len(nt)) % n
+    return Orf(
+        strand, strand * (first % 3 + 1), start, start + len(nt), len(nt), len(protein), protein
+    )
+
+
+def find_orfs(
+    sequence: str, *, circular: bool = False, min_aa: int = MIN_ORF_AA
+) -> tuple[Orf, ...]:
     seq_u = sequence.upper()
     if not set(seq_u).issubset("ACGTN"):
         raise EuleraseError(
             "The sequence has letters other than A, C, G, T and N; give DNA to search for ORFs."
         )
-    orfs = []
     strands = [(seq_u, +1), (str(Seq(seq_u).reverse_complement()), -1)]
-    for s_seq, strand in strands:
-        n = len(s_seq)
-        for frame in range(3):
-            resume = 0  # first position after the stop that ended the previous ORF in this frame
-            for i in range(frame, n - 2, 3):
-                if i < resume or s_seq[i : i + 3] != "ATG":
-                    continue
-                for j in range(i + 3, n - 2, 3):
-                    if s_seq[j : j + 3] in _STOPS:
-                        resume = j + 3
-                        aa_len = (j - i) // 3
-                        if aa_len >= min_aa:
-                            nt_sub = s_seq[i : j + 3]
-                            aa_seq = str(Seq(nt_sub).translate(to_stop=True))
-                            if strand == +1:
-                                start_pos, end_pos = i, j + 3
-                            else:
-                                start_pos, end_pos = n - (j + 3), n - i
-                            orfs.append(
-                                Orf(
-                                    strand,
-                                    strand * (frame + 1),
-                                    start_pos,
-                                    end_pos,
-                                    len(nt_sub),
-                                    len(aa_seq),
-                                    aa_seq,
-                                )
-                            )
-                        break
-                else:
-                    break  # no stop before the end: no later ATG in this frame has one either
+    orfs = [o for s, strand in strands for o in _scan_strand(s, strand, circular, min_aa)]
     return tuple(sorted(orfs, key=lambda o: (-o.strand, abs(o.frame), o.start)))
