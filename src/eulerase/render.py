@@ -13,6 +13,7 @@ from matplotlib.figure import Figure
 from matplotlib.lines import Line2D
 from matplotlib.patches import Circle, FancyArrowPatch
 from matplotlib.text import Text
+from matplotlib.ticker import MaxNLocator
 
 from eulerase.analysis import Analysis, Step, settings_text
 from eulerase.errors import EuleraseError
@@ -823,6 +824,43 @@ def draw_figure(
     plot = _build_plot(ax, a, layout, FIGURE_ASPECT)
     plot.style(sum(len(trail) for trail in a.trails) if upto is None else upto)
     _draw_left_out(fig, plot, footer)
+
+
+def draw_spectrum(fig: Figure, a: Analysis) -> None:
+    """Draw the k-mer spectrum: one bar per multiplicity, the minimum multiplicity marked.
+
+    Bars below the minimum (the k-mers that setting removes) are grey and hatched; the rest are
+    blue and plain, so colour is not the only cue.
+    """
+    fig.clear()
+    fig.set_layout_engine("constrained")
+    ax = fig.add_subplot(111)
+    ax.set_facecolor(SURFACE)
+    minimum = a.settings.min_multiplicity
+    for times, count in a.spectrum:
+        cut = minimum is not None and times < minimum
+        ax.bar(
+            times,
+            count,
+            color=FUTURE if cut else TRAIL_COLORS[0],
+            edgecolor=INK,
+            hatch="//" if cut else None,
+        )
+    if minimum is not None:
+        ax.axvline(minimum - 0.5, color=INK, linewidth=1.5)
+        ax.text(
+            minimum - 0.5,
+            1.0,
+            f"minimum {minimum} ",
+            color=INK,
+            ha="right",
+            va="top",
+            transform=ax.get_xaxis_transform(),
+        )
+    ax.set_xlabel("Times seen", color=INK)
+    ax.set_ylabel("Distinct k-mers", color=INK)
+    ax.xaxis.set_major_locator(MaxNLocator(integer=True, min_n_ticks=1))
+    ax.yaxis.set_major_locator(MaxNLocator(integer=True))
 
 
 HOVER_PT = 8.0  # font size of the read-out of a node under the pointer
