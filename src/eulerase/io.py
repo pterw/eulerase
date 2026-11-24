@@ -10,13 +10,13 @@ import zlib
 
 from Bio import SeqIO
 from Bio.Seq import Seq
-from Bio.SeqFeature import SeqFeature, SimpleLocation
+from Bio.SeqFeature import CompoundLocation, SeqFeature, SimpleLocation
 from Bio.SeqRecord import SeqRecord
 
 from eulerase.analysis import TABLES, Analysis, columns, format_cell, rows, settings_text
 from eulerase.assembly import gfa_links
 from eulerase.errors import EuleraseError
-from eulerase.orfs import orf_rule_text
+from eulerase.orfs import Orf, orf_rule_text
 from eulerase.sequence import Record, parse_records
 
 _GZIP_MAGIC = b"\x1f\x8b"
@@ -25,8 +25,10 @@ _FIRST_LINE_FORMATS = (("LOCUS", "genbank"), ("ID ", "embl"), (">", "fasta"), ("
 
 
 def _text_of(data: bytes) -> str:
-    """Decode, then drop the byte-order mark and any leading blank lines (once, for all users)."""
+    """Decode, drop the byte-order mark, read `\\r\\n` and a lone `\\r` as `\\n`, then drop any
+    leading blank lines (once, for all users)."""
     text = data.decode("utf-8", errors="replace").removeprefix(_BOM)
+    text = text.replace("\r\n", "\n").replace("\r", "\n")
     return re.sub(r"\A(?:[^\S\n]*\n)+", "", text)
 
 
@@ -85,6 +87,24 @@ def read_records(path: str | os.PathLike) -> list[Record]:
     return found
 
 
+_TOPOLOGY_LINE = (
+    "Topology: a cycle in the assembly graph; it can be a circular molecule or a repeat."
+)
+_SOURCE_NOTE = "assembled by Eulerase from the input; organism not known"
+
+
+def _cds_location(orf: Orf, length: int) -> SimpleLocation | CompoundLocation:
+    """The ORF's location; one that crosses position 1 (`end` above `length`) is two parts in
+    transcript order, which on the minus strand is the wrapped part first."""
+    if orf.end <= length:
+        return SimpleLocation(orf.start, orf.end, strand=orf.strand)
+    parts = [
+        SimpleLocation(orf.start, length, strand=orf.strand),
+        SimpleLocation(0, orf.end - length, strand=orf.strand),
+    ]
+    return CompoundLocation(parts if orf.strand == 1 else parts[::-1])
+
+
 def _seqrecords(a: Analysis) -> list[SeqRecord]:
     """One Biopython record per contig; the settings and, with ORFs, the ORF rule travel in the
     description (FASTA, GenBank) and in the GenBank comment."""
@@ -99,6 +119,7 @@ def _seqrecords(a: Analysis) -> list[SeqRecord]:
                 f"len={format_cell(contig.length)}",
                 f"mean_multiplicity={format_cell(contig.mean_multiplicity)}",
                 f"gc={format_cell(contig.gc)} orfs={count}",
+                *(["circular=true"] if contig.circular else []),
                 settings,
                 *rule,
             ]
@@ -108,16 +129,24 @@ def _seqrecords(a: Analysis) -> list[SeqRecord]:
         rec.annotations["molecule_type"] = "DNA"
         rec.annotations["date"] = "01-JAN-1980"
         rec.annotations["topology"] = "circular" if contig.circular else "linear"
-        rec.annotations["comment"] = "\n".join([settings, *rule])
+        topology = [_TOPOLOGY_LINE] if contig.circular else []
+        rec.annotations["comment"] = "\n".join([settings, *rule, *topology])
+        rec.features.append(
+            SeqFeature(
+                SimpleLocation(0, len(contig.sequence)),
+                type="source",
+                qualifiers={"mol_type": ["other DNA"], "note": [_SOURCE_NOTE]},
+            )
+        )
         for orf in orf_list or ():
             rec.features.append(
                 SeqFeature(
-                    SimpleLocation(orf.start, orf.end, strand=orf.strand),
+                    _cds_location(orf, len(contig.sequence)),
                     type="CDS",
                     qualifiers={
                         "translation": [orf.protein],
                         "product": ["predicted open reading frame"],
-                        "frame": [str(orf.frame)],
+                        "note": [f"frame {orf.frame:+d}"],
                         "codon_start": [1],
                     },
                 )
@@ -165,13 +194,14 @@ def gfa_text(a: Analysis) -> str:
         if not _GFA_SEQUENCE.fullmatch(c.sequence):
             raise EuleraseError(
                 f"Contig ctg{c.id} holds characters a GFA file cannot hold (only the letters "
-                "A to Z are allowed); change the input letters."
+                "A to Z in either case, '=' and '.' are allowed); change the input letters."
             )
     lines = [f"H\tVN:Z:1.0\tst:Z:{settings_text(a.settings)}"]
     for c in a.contigs:
         lines.append(f"S\tctg{c.id}\t{c.sequence}\tLN:i:{c.length}\tKC:i:{c.kmer_count}")
-    overlap = a.k - 1
+    cycles = {c.id for c in a.contigs if c.circular}
     for src, src_orient, dst, dst_orient in gfa_links(a.contigs, a.k, a.settings.both_strands):
+        overlap = 0 if src in cycles else a.k - 1  # a cycle's one link is to itself
         lines.append(f"L\tctg{src}\t{src_orient}\tctg{dst}\t{dst_orient}\t{overlap}M")
     return "\n".join(lines) + "\n"
 

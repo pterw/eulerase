@@ -137,6 +137,7 @@ def test_format_is_detected_from_content(tmp_path, name, data, expected):
         (b"\xef\xbb\xbf>r1\nACGT\n", "fasta"),
         (b"\n\n  \n>r1\nACGT\n", "fasta"),
         (b">r1\r\nACGT\r\n", "fasta"),
+        (b">r1\rACGT\r", "fasta"),
     ],
     ids=[
         "fasta",
@@ -148,6 +149,7 @@ def test_format_is_detected_from_content(tmp_path, name, data, expected):
         "bom",
         "blank-lines",
         "crlf",
+        "cr-only",
     ],
 )
 def test_detect_format_looks_at_content_only(data, expected):
@@ -180,6 +182,33 @@ def test_case_blank_lines_line_endings_and_wrapping_do_not_change_records(tmp_pa
         lines += [f">{r.name}", "", *(s[i : i + 17] for i in range(0, len(s), 17)), ""]
     messy.write_bytes("\r\n".join(lines).encode())
     _assert_same_records(read_records(messy), read_records(clean))
+
+
+_FASTA_LINES = [">r1", "ACGTAC", "GGTTAA", ">r2", "TTGCA"]
+_BARE_LINES = ["ACGTAC", "GGTTAA"]
+
+
+@pytest.mark.parametrize(
+    ("lines", "fmt", "expected"),
+    [
+        (_FASTA_LINES, "fasta", [("r1", "ACGTACGGTTAA"), ("r2", "TTGCA")]),
+        (_BARE_LINES, "bare", [("seq1", "ACGTAC"), ("seq2", "GGTTAA")]),
+    ],
+    ids=["fasta-wrapped", "bare"],
+)
+@pytest.mark.parametrize(
+    "endings",
+    [("\n",), ("\r\n",), ("\r",), ("\r", "\r\n", "\n")],
+    ids=["lf", "crlf", "cr", "mixed"],
+)
+def test_every_line_ending_gives_the_same_records(tmp_path, lines, fmt, expected, endings):
+    data = "".join(
+        line + endings[i % len(endings)] for i, line in enumerate(lines)
+    ).encode()  # a trailing ending too
+    path = tmp_path / "reads.txt"
+    path.write_bytes(data)
+    assert detect_format(data) == fmt
+    assert [(r.name, r.sequence) for r in read_records(path)] == expected
 
 
 def test_files_over_60000_bases_load_whole(tmp_path):

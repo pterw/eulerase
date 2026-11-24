@@ -5,6 +5,8 @@ the worked cases are compared byte for byte with texts typed by hand."""
 import csv
 import io
 import json
+import random
+import re
 import subprocess
 import sys
 from collections import Counter
@@ -113,6 +115,127 @@ def test_orf_rule_is_written_with_orfs(case):
         assert "ATG" in rule and "standard" in rule and str(MIN_ORF_AA) in rule
 
 
+_SENSE_CODONS = [
+    a + b + c
+    for a in "ACGT"
+    for b in "ACGT"
+    for c in "ACGT"
+    if a + b + c not in {"TAA", "TAG", "TGA"}
+]
+
+
+def _gene(codons: int, seed: int) -> str:
+    rng = random.Random(seed)
+    return "ATG" + "".join(rng.choice(_SENSE_CODONS) for _ in range(codons)) + "TAA"
+
+
+def _has_no_repeated_8mer(circle: str) -> bool:
+    ring = circle + circle[:7]
+    return len({ring[i : i + 8] for i in range(len(circle))}) == len(circle)
+
+
+def _crossing_cycle(strand: int) -> Analysis:
+    """A cycle (a circle read three times at k=9) whose least rotation cuts through a gene on the
+    given strand, so that the ORF found there has `end` above the contig's length."""
+    for seed in range(300):
+        gene = _gene(25, seed)
+        gene = gene if strand == 1 else revcomp(gene)
+        circle = random_dna(30, seed) + gene + random_dna(30, seed + 1000)
+        if not _has_no_repeated_8mer(circle):
+            continue
+        a = _analysis([circle * 3], k=9)
+        (contig,) = a.contigs
+        if contig.circular and any(o.strand == strand and o.end > contig.length for o in a.orfs[0]):
+            return a
+    raise AssertionError(f"no circle with a gene across position 1 on strand {strand}")
+
+
+def _cds_locations(text: str) -> list[str]:
+    return re.findall(r"^     CDS +(\S+)$", text, re.MULTILINE)
+
+
+@pytest.mark.parametrize("strand", [1, -1], ids=["plus", "minus"])
+def test_an_orf_across_position_1_is_a_joined_location_on_each_strand(strand):
+    a = _crossing_cycle(strand)
+    (contig,) = a.contigs
+    text = genbank_text(a)
+    (rec,) = _parse(text, "genbank")
+    cds = [f for f in rec.features if f.type == "CDS"]
+    locations = _cds_locations(text)
+    assert len(cds) == len(locations) == len(a.orfs[0])
+    crossing = 0
+    for orf, feature, location in zip(a.orfs[0], cds, locations, strict=True):
+        assert "frame" not in feature.qualifiers
+        sign = "+" if orf.strand == 1 else "-"
+        assert feature.qualifiers["note"] == [f"frame {sign}{abs(orf.frame)}"]
+        made = feature.extract(rec.seq).translate(to_stop=True)
+        assert str(made) == orf.protein
+        if orf.end <= contig.length:
+            assert location == (
+                f"{orf.start + 1}..{orf.end}"
+                if orf.strand == 1
+                else f"complement({orf.start + 1}..{orf.end})"
+            )
+            continue
+        crossing += 1
+        tail, head = contig.length - orf.start, orf.end - contig.length
+        assert tail != head  # the two parts differ in length, so a swap cannot go unseen
+        join = f"join({orf.start + 1}..{contig.length},1..{head})"
+        assert location == (join if orf.strand == 1 else f"complement({join})")
+        assert len(feature.location.parts) == 2
+    assert crossing >= 1
+
+
+def test_a_full_circle_orf_is_written_and_read_back():
+    circle = _gene(24, 5)  # ATG, 24 sense codons, TAA: 78 letters
+    assert len(circle) == 78 and _has_no_repeated_8mer(circle)
+    a = _analysis([circle * 3], k=9)
+    (contig,) = a.contigs
+    assert contig.circular and contig.length == 78
+    (full,) = [o for o in a.orfs[0] if o.length_nt == contig.length and o.strand == 1]
+    (rec,) = _parse(genbank_text(a), "genbank")
+    features = [f for f in rec.features if f.type == "CDS"]
+    assert len(features) == len(a.orfs[0])
+    made = {str(f.extract(rec.seq).translate(to_stop=True)) for f in features}
+    assert full.protein in made
+    assert full.end > contig.length  # the written circle is cut inside the gene: a joined location
+    (cds,) = [f for f in features if int(f.location.parts[0].start) == full.start]
+    assert [(int(p.start), int(p.end)) for p in cds.location.parts] == [
+        (full.start, contig.length),
+        (0, full.end - contig.length),
+    ]
+
+
+def test_an_orf_ending_at_the_last_letter_is_a_simple_location():
+    a = _analysis([_gene(30, 1)], k=9)  # the read is only the gene: ATG, 30 sense codons, TAA
+    (contig,) = a.contigs
+    (orf,) = a.orfs[0]
+    assert orf.end == contig.length
+    text = genbank_text(a)
+    assert _cds_locations(text) == [f"{orf.start + 1}..{orf.end}"]
+    (rec,) = _parse(text, "genbank")
+    (cds,) = [f for f in rec.features if f.type == "CDS"]
+    assert str(cds.extract(rec.seq).translate(to_stop=True)) == orf.protein
+
+
+@pytest.mark.parametrize("case", [_three_reads_with_orfs, _repeat], ids=["three-reads", "repeat"])
+def test_every_genbank_record_has_one_source_feature_and_no_organism_or_table_qualifier(case):
+    a = case()
+    records = _parse(genbank_text(a), "genbank")
+    assert len(records) == len(a.contigs)
+    for rec in records:
+        sources = [f for f in rec.features if f.type == "source"]
+        assert len(sources) == 1 and rec.features[0] is sources[0]
+        (source,) = sources
+        assert (int(source.location.start), int(source.location.end)) == (0, len(rec.seq))
+        assert source.qualifiers["mol_type"] == ["other DNA"]
+        assert source.qualifiers["note"] == [
+            "assembled by Eulerase from the input; organism not known"
+        ]
+        for feature in rec.features:
+            assert not {"organism", "transl_table"} & set(feature.qualifiers)
+
+
 def test_non_dna_is_written_as_fasta_without_a_rule_and_refused_as_genbank():
     a = _analysis(["LEMONLEMONADE"], k=3)
     assert a.orfs is None
@@ -178,16 +301,27 @@ _RULE = (
     "an ORF is a reading frame, not evidence of a gene."
 )
 _TEN_FASTA = f">ctg1 len=4 mean_multiplicity=10.0000 gc=0.5000 orfs=0 {_SETTINGS} {_RULE}\nATGC\n"
-_REPEAT_FASTA = f">ctg1 len=4 mean_multiplicity=2.5000 gc=0.5000 orfs=0 {_SETTINGS} {_RULE}\nATGC\n"
+_REPEAT_FASTA = (
+    f">ctg1 len=4 mean_multiplicity=2.5000 gc=0.5000 orfs=0 circular=true {_SETTINGS} {_RULE}\n"
+    "ATGC\n"
+)
 # GFA: the H line with the settings; one S line per contig with LN (length) and KC (the sum of
 # the multiplicities of the contig's k-mers); one L line per overlap of k - 1 = 2 letters.
 # Ten copies: LN 4, 2 distinct k-mers, KC 10 + 10 = 20, mean 10: all different; no link.
 # The repeat: LN 4, 4 distinct k-mers, KC 3 + 3 + 2 + 2 = 10, mean 2.5; the circular contig
-# ATGC has the one link to itself (the writer gives every link k - 1 = 2 letters for now).
+# ATGC has the one link to itself, and a link that names a cycle has the overlap 0M.
 _TEN_GFA = f"H\tVN:Z:1.0\tst:Z:{_SETTINGS}\nS\tctg1\tATGC\tLN:i:4\tKC:i:20\n"
 _REPEAT_GFA = (
-    f"H\tVN:Z:1.0\tst:Z:{_SETTINGS}\nS\tctg1\tATGC\tLN:i:4\tKC:i:10\nL\tctg1\t+\tctg1\t+\t2M\n"
+    f"H\tVN:Z:1.0\tst:Z:{_SETTINGS}\nS\tctg1\tATGC\tLN:i:4\tKC:i:10\nL\tctg1\t+\tctg1\t+\t0M\n"
 )
+# GenBank FEATURES: one source feature spanning the record (1..4), its qualifiers from column 22,
+# the note wrapped on a space so that no line passes 79 characters (21 + 58).
+_SOURCE_FEATURE = [
+    "     source          1..4",
+    '                     /mol_type="other DNA"',
+    '                     /note="assembled by Eulerase from the input; organism not',
+    '                     known"',
+]
 _TEN_GENBANK = "\n".join(
     [
         "LOCUS       ctg1                       4 bp    DNA     linear   UNK 01-JAN-1980",
@@ -210,6 +344,7 @@ _TEN_GENBANK = "\n".join(
         "            off an end or across a codon with N); an ORF is a reading frame, not",
         "            evidence of a gene.",
         "FEATURES             Location/Qualifiers",
+        *_SOURCE_FEATURE,
         "ORIGIN",
         "        1 atgc",
         "//",
@@ -219,12 +354,12 @@ _TEN_GENBANK = "\n".join(
 _REPEAT_GENBANK = "\n".join(
     [
         "LOCUS       ctg1                       4 bp    DNA     circular UNK 01-JAN-1980",
-        "DEFINITION  len=4 mean_multiplicity=2.5000 gc=0.5000 orfs=0 k=3; both strands:",
-        "            no; set of k-mers: no; minimum multiplicity: none; tip clipping: no",
-        "            ORFs: start codon ATG, standard genetic code, at least 25 amino",
-        "            acids, the longest per stop codon, ending in a stop codon (none read",
-        "            off an end or across a codon with N); an ORF is a reading frame, not",
-        "            evidence of a gene..",
+        "DEFINITION  len=4 mean_multiplicity=2.5000 gc=0.5000 orfs=0 circular=true k=3;",
+        "            both strands: no; set of k-mers: no; minimum multiplicity: none; tip",
+        "            clipping: no ORFs: start codon ATG, standard genetic code, at least",
+        "            25 amino acids, the longest per stop codon, ending in a stop codon",
+        "            (none read off an end or across a codon with N); an ORF is a reading",
+        "            frame, not evidence of a gene..",
         "ACCESSION   ctg1",
         "VERSION     ctg1",
         "KEYWORDS    .",
@@ -237,7 +372,10 @@ _REPEAT_GENBANK = "\n".join(
         "            acids, the longest per stop codon, ending in a stop codon (none read",
         "            off an end or across a codon with N); an ORF is a reading frame, not",
         "            evidence of a gene.",
+        "            Topology: a cycle in the assembly graph; it can be a circular",
+        "            molecule or a repeat.",
         "FEATURES             Location/Qualifiers",
+        *_SOURCE_FEATURE,
         "ORIGIN",
         "        1 atgc",
         "//",
@@ -453,7 +591,9 @@ def test_gfa_round_trip(i):
     assert [(name, seq, int(tags["LN"])) for name, seq, tags in segments] == [
         (f"ctg{c.id}", c.sequence, len(c.sequence)) for c in a.contigs
     ]
-    assert {overlap for *_, overlap in links} <= {f"{k - 1}M"}
+    cycles = {f"ctg{c.id}" for c in a.contigs if c.circular}
+    for src, _, dst, _, overlap in links:  # a link that names a cycle has no overlap
+        assert overlap == ("0M" if {src, dst} & cycles else f"{k - 1}M")
     written = [(int(src[3:]), so, int(dst[3:]), do) for src, so, dst, do, _ in links]
     expected = _brute_links({c.id: (c.sequence, c.circular) for c in a.contigs}, k, both)
     # the writer picks one orientation of each link and the oracle another: compare the classes
@@ -474,7 +614,7 @@ def test_a_circular_contig_links_to_itself():
     # ATGCATGCATGC at k=3 is the one circular contig ATGC, which has one link, to itself
     _, segments, links = _parse_gfa(gfa_text(_repeat()))
     assert [name for name, _, _ in segments] == ["ctg1"]
-    assert links == [("ctg1", "+", "ctg1", "+", "2M")]
+    assert links == [("ctg1", "+", "ctg1", "+", "0M")]
 
 
 def test_oracle_rejects_a_wrong_gfa_link():
@@ -493,6 +633,26 @@ def test_oracle_rejects_a_wrong_gfa_link():
     # with both strands, ACG (reverse complement CGT) and CGA (reverse complement TCG)
     strands = {1: ("ACG", False), 2: ("CGA", False)}
     assert _brute_links(strands, k, True) == [(1, "+", 1, "-"), (1, "+", 2, "+"), (2, "-", 2, "+")]
+
+
+def test_the_gfa_of_a_contig_whose_ends_overlap_links_it_to_itself_with_the_overlap():
+    a = _analysis(["AACGTAA", "AAG"], k=3)
+    _, segments, links = _parse_gfa(gfa_text(a))
+    assert segments == [
+        ("ctg1", "AACGTAA", {"LN": "7", "KC": "5"}),
+        ("ctg2", "AAG", {"LN": "3", "KC": "1"}),
+    ]
+    assert not any(c.circular for c in a.contigs)
+    assert set(links) == {("ctg1", "+", "ctg1", "+", "2M"), ("ctg1", "+", "ctg2", "+", "2M")}
+
+
+@pytest.mark.parametrize("read", ["A=A.A=A.", "a=a.a=a."], ids=["upper", "lower"])
+def test_the_gfa_refusal_names_what_it_accepts(read):
+    assert "ctg1" in gfa_text(_analysis([read], k=3))  # letters, "=" and "." are written
+    for bad in ("AC1AC1AC1", 'A,B"A,B"A', "αβγαβγαβ"):
+        with pytest.raises(EuleraseError, match="ctg1") as refused:
+            gfa_text(_analysis([bad], k=3))
+        assert "'='" in str(refused.value) and "'.'" in str(refused.value)
 
 
 def test_gfa_segments_carry_ln_and_kc():
