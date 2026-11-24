@@ -301,6 +301,29 @@ class Presenter:
     def mode_changed(self, input_mode: str) -> None:
         self._view.set_k_enabled(input_mode == "sequences")
 
+    def load_example(self, name: str) -> None:
+        example = next(e for e in EXAMPLES if e.name == name)
+        minimum = example.min_multiplicity
+        self.open_with(
+            FormValues(
+                example.text,
+                example.input_mode,
+                str(example.k),
+                example.both_strands,
+                example.unique,
+                "" if minimum is None else str(minimum),
+                example.clip_tips,
+            )
+        )
+
+    def open_with(self, form: FormValues | None) -> None:
+        if form is None:
+            self.load_example(EXAMPLES[0].name)
+            return
+        self._view.set_form(form)
+        self.mode_changed(form.input_mode)
+        self.build()
+
     def build(self) -> None:
         form = self._view.read_form()
         aspect = self._view.canvas_aspect()
