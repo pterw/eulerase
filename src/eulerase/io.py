@@ -1,5 +1,7 @@
-"""Reading and writing files: sequence file reader (FASTA, FASTQ, GenBank, EMBL; plain or gzip)."""
+"""Reading and writing files: the sequence file reader (FASTA, FASTQ, GenBank, EMBL; plain or
+gzip) and the writers (FASTA, GenBank, GFA, CSV)."""
 
+import csv
 import gzip
 import io
 import os
@@ -11,7 +13,8 @@ from Bio.Seq import Seq
 from Bio.SeqFeature import SeqFeature, SimpleLocation
 from Bio.SeqRecord import SeqRecord
 
-from eulerase.analysis import Analysis, format_cell, settings_text
+from eulerase.analysis import TABLES, Analysis, columns, format_cell, rows, settings_text
+from eulerase.assembly import gfa_links
 from eulerase.errors import EuleraseError
 from eulerase.orfs import orf_rule_text
 from eulerase.sequence import Record, parse_records
@@ -149,6 +152,48 @@ def genbank_text(a: Analysis) -> str:
             "use the FASTA export, which holds every contig."
         )
     return _written(a, "genbank")
+
+
+_GFA_SEQUENCE = re.compile(r"[A-Za-z=.]+")
+
+
+def gfa_text(a: Analysis) -> str:
+    """The contigs and their overlap links as GFA 1.0 text (`\\n` line endings); the settings
+    travel in the header line. A contig with a letter a GFA file cannot hold is refused."""
+    for c in a.contigs:
+        if not _GFA_SEQUENCE.fullmatch(c.sequence):
+            raise EuleraseError(
+                f"Contig ctg{c.id} holds characters a GFA file cannot hold (only the letters "
+                "A to Z are allowed); change the input letters."
+            )
+    lines = [f"H\tVN:Z:1.0\tst:Z:{settings_text(a.settings)}"]
+    for c in a.contigs:
+        depth = int(round(c.mean_multiplicity))
+        lines.append(f"S\tctg{c.id}\t{c.sequence}\tLN:i:{c.length}\tRC:i:{c.edges}\tDP:i:{depth}")
+    overlap = a.k - 1
+    for src, src_orient, dst, dst_orient in gfa_links(a.contigs, a.k, a.settings.both_strands):
+        lines.append(f"L\tctg{src}\t{src_orient}\tctg{dst}\t{dst_orient}\t{overlap}M")
+    return "\n".join(lines) + "\n"
+
+
+# Rows of the Assembly table that are text, not data: CSV files hold data only.
+_TEXT_MEASURES = ("settings", "orf rule")
+
+
+def csv_text(a: Analysis, table: str) -> str:
+    """One table as CSV text: a header row, then every row (none cut), `\\n` after each."""
+    out = io.StringIO()
+    writer = csv.writer(out, lineterminator="\n")
+    writer.writerow(columns(table))
+    for row in rows(a, table):
+        if not (table == "Assembly" and row[0] in _TEXT_MEASURES):
+            writer.writerow(row)
+    return out.getvalue()
+
+
+def csv_paths(prefix: str) -> dict[str, str]:
+    """The five CSV file paths for `prefix`, by lower-case table name, in table order."""
+    return {table.lower(): f"{prefix}_{table.lower()}.csv" for table in TABLES}
 
 
 def write_text_file(path: str | os.PathLike, text: str) -> None:
