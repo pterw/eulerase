@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=68"]
+requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -7,13 +7,28 @@ name = "eulerase"
 version = "0.1.0"
 description = "Learn and explore de Bruijn graphs: Eulerian trails and contigs from sequences"
 readme = "README.md"
-license = { file = "LICENSE" }
+license = "MIT"
+license-files = ["LICENSE"]
+keywords = ["de Bruijn graph", "Eulerian trail", "k-mer", "genome assembly", "bioinformatics", "education"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Education",
+    "Intended Audience :: Science/Research",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Scientific/Engineering :: Bio-Informatics",
+]
 requires-python = ">=3.13"
 dependencies = [
     "networkx==3.6.1",
     "biopython==1.88",
     "matplotlib==3.11.2",
 ]
+
+[project.urls]
+Repository = "https://github.com/pterw/eulerase"
+Issues = "https://github.com/pterw/eulerase/issues"
+Changelog = "https://github.com/pterw/eulerase/blob/main/CHANGELOG.md"
 
 [project.optional-dependencies]
 dev = [
