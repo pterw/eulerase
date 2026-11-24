@@ -5,11 +5,15 @@ reaches its presenter only through `bind`, so no callback is wired before then.
 """
 
 import tkinter
+import tkinter.filedialog
 import tkinter.font
+import tkinter.messagebox
 import tkinter.ttk as ttk
+from dataclasses import dataclass
+from pathlib import Path
 
 from eulerase import render
-from eulerase.gui.presenter import MIN_WINDOW, FormValues, fit_window
+from eulerase.gui.presenter import EXAMPLES, EXPORT_KINDS, MIN_WINDOW, FormValues, fit_window
 
 MODES = (("sequences", "Sequences or FASTA"), ("kmers", "K-mer list"))
 MIN_MULTIPLICITY_HELP = (
@@ -24,6 +28,52 @@ CLIP_TIPS_HELP = (
 )
 SIDEBAR_TEXT_WIDTH = 250  # pixels at which the help sentences wrap
 VIEW_BUTTONS = ("Zoom", "Pan", "Reset view")
+TK_KEY_NAMES = {"Ctrl": "Control", "Esc": "Escape", "Enter": "Return"}
+
+
+@dataclass(frozen=True)
+class Command:
+    """A menu entry: `method` names a Presenter method, called with `args`. `shortcut` is the
+    text of the accelerator column ("Ctrl+Shift+F"), or None."""
+
+    menu: str
+    label: str
+    shortcut: str | None
+    method: str
+    args: tuple = ()
+
+
+def _export(kind: str, label: str, letter: str) -> Command:
+    return Command("File", label, f"Ctrl+Shift+{letter}", "export", (kind,))
+
+
+COMMANDS = (
+    Command("File", "Open file...", "Ctrl+Shift+O", "open_file"),
+    _export("figure", "Save figure...", "F"),
+    _export("csv", "Save tables as CSV...", "C"),
+    _export("fasta", "Save contigs as FASTA...", "A"),
+    _export("genbank", "Save contigs as GenBank...", "B"),
+    _export("gfa", "Save graph as GFA...", "G"),
+    Command("File", "Quit", "Ctrl+Q", "quit"),
+    *(Command("Examples", e.name, None, "load_example", (e.name,)) for e in EXAMPLES),
+    Command("Walk", "Build", "Ctrl+Enter", "build"),
+    Command("Walk", "Stop", "Esc", "stop"),
+    Command("Walk", "Play or pause", "F5", "toggle_play"),
+    Command("Walk", "Step back", "Alt+Left", "step_back"),
+    Command("Walk", "Step forward", "Alt+Right", "step_forward"),
+    Command("Walk", "First step", "Alt+Home", "step_start"),
+    Command("Walk", "Last step", "Alt+End", "step_end"),
+)
+
+
+def tk_sequence(shortcut: str) -> str:
+    """The Tk event sequence of a shortcut's text. Tk keysyms are case sensitive: a letter
+    arrives in lower case unless Shift is held."""
+    parts = shortcut.split("+")
+    keys = [TK_KEY_NAMES.get(p, p) for p in parts]
+    if "Shift" not in parts and len(keys[-1]) == 1:
+        keys[-1] = keys[-1].lower()
+    return "<" + "-".join(keys) + ">"
 
 
 class Window:
@@ -199,6 +249,44 @@ class Window:
             button.configure(command=lambda: presenter.mode_changed(self.mode.get()))
         self.text.bind("<Control-Return>", self._ctrl_enter)
         self.root.protocol("WM_DELETE_WINDOW", presenter.quit)
+        self._menu_bar()
+        open_command = next(c for c in COMMANDS if c.method == "open_file")
+        self.open_button.configure(command=lambda: self._run(open_command))
+        self.examples_button.configure(command=self._post_examples)
+        for c in COMMANDS:
+            if c.shortcut and c.method != "build":  # Ctrl+Enter is bound on the input box
+                self.root.bind(tk_sequence(c.shortcut), lambda event, c=c: self._key(c))
+
+    def _menu_bar(self) -> None:
+        bar = tkinter.Menu(self.root)
+        menus = {}
+        self._export_entries = {}
+        for c in COMMANDS:
+            if c.menu not in menus:
+                menus[c.menu] = tkinter.Menu(bar, tearoff=False)
+                bar.add_cascade(label=c.menu, menu=menus[c.menu])
+            menu = menus[c.menu]
+            menu.add_command(
+                label=c.label, accelerator=c.shortcut or "", command=lambda c=c: self._run(c)
+            )
+            if c.method == "export":
+                self._export_entries[c.args[0]] = (menu, menu.index("end"))
+        self.examples_menu = menus["Examples"]
+        self.root.configure(menu=bar)
+        self.set_exports_enabled(dict.fromkeys(EXPORT_KINDS, False))
+
+    def _run(self, command: Command) -> None:
+        getattr(self.presenter, command.method)(*command.args)
+
+    def _key(self, command: Command) -> str:
+        self._run(command)
+        return "break"
+
+    def _post_examples(self) -> None:
+        button = self.examples_button
+        self.examples_menu.tk_popup(
+            button.winfo_rootx(), button.winfo_rooty() + button.winfo_height()
+        )
 
     def _ctrl_enter(self, event) -> str:
         self.presenter.build()
@@ -233,6 +321,37 @@ class Window:
 
     def show_status(self, message: str, error: bool = False) -> None:
         self.status.configure(text=message, style="Error.TLabel" if error else "TLabel")
+
+    def set_exports_enabled(self, enabled) -> None:
+        for kind, (menu, index) in self._export_entries.items():
+            menu.entryconfigure(index, state="normal" if enabled[kind] else "disabled")
+
+    def confirm(self, message: str) -> bool:
+        return tkinter.messagebox.askyesno("Eulerase", message, parent=self.root)
+
+    def ask_open_path(self) -> str | None:
+        return tkinter.filedialog.askopenfilename(parent=self.root) or None
+
+    def ask_save_path(self, kind: str, suggested: str) -> str | None:
+        # The CSV name is a prefix: no file of that name is written, so no overwrite prompt.
+        return (
+            tkinter.filedialog.asksaveasfilename(
+                parent=self.root,
+                initialfile=suggested,
+                defaultextension=Path(suggested).suffix,
+                confirmoverwrite=kind != "csv",
+            )
+            or None
+        )
+
+    def confirm_export(self, paths, existing) -> bool:
+        message = "Write these files?\n" + "\n".join(paths)
+        if existing:
+            message += "\n\nThese already exist and will be replaced:\n" + "\n".join(existing)
+        return tkinter.messagebox.askyesno("Eulerase", message, parent=self.root)
+
+    def save_figure(self, analysis, path: str) -> None:
+        render.save_figure(analysis, path)  # EuleraseError or OSError: the presenter shows both
 
     def show_busy(self, busy: bool) -> None:
         self.stop_button.state(["!disabled" if busy else "disabled"])
