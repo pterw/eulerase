@@ -354,12 +354,29 @@ class Presenter:
         except EuleraseError as error:
             self._fail(str(error))
             return
+        if not self._confirmed(records, settings):
+            self._view.show_status("Build cancelled; nothing was changed.")
+            return
         self.pause()
         self._token += 1  # abandons any build still running
         self._clear_result()
         self._phase = BUSY
         self._view.show_busy(True)
         self._worker.start(self._job(records, settings, aspect, self._token))
+
+    def _confirmed(self, records: Sequence[Record], settings: Settings) -> bool:
+        """Ask once about a large build; above the core's limit the core refuses, so no question."""
+        count = estimate_kmers(
+            records,
+            settings.k,
+            both_strands=settings.both_strands,
+            input_mode=settings.input_mode,
+        )
+        if not CONFIRM_ABOVE_KMERS < count <= kmers.MAX_KMERS:
+            return True
+        return self._view.confirm(
+            f"This build makes {count:,} k-mers and may take a while. Build anyway?"
+        )
 
     def stop(self) -> None:
         # No tick to cancel: BUSY is entered only by build(), which pauses, and play() does
