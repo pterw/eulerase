@@ -10,7 +10,6 @@ from genomes import brute_kmers, child_env
 from eulerase import cli
 from eulerase.analysis import DEFAULT_K
 
-_NOT_BUILT = "The window is not built yet; give --seq, --kmers or --file.\n"
 _RUN_MAIN = "import sys; from eulerase.cli import main; sys.exit(main(sys.argv[1:]))"
 
 
@@ -124,16 +123,6 @@ def test_k_defaults_to_the_shared_default(capsys):
     _, other_out, _ = _run(capsys, "--seq", seq, "-k", str(DEFAULT_K + 1))
     assert other_out != given_out
     assert default_out == given_out
-
-
-@pytest.mark.parametrize(
-    "argv",
-    [[], ["--gui"], ["--gui", "--seq", "ACGTACGT"]],
-    ids=["no-arguments", "gui", "gui-with-input"],
-)
-def test_no_arguments_and_gui_print_the_not_built_message(argv, capsys):
-    code, out, err = _run(capsys, *argv)
-    assert (code, out, err) == (1, "", _NOT_BUILT)
 
 
 def test_an_error_that_is_not_a_eulerase_error_is_not_hidden(monkeypatch):

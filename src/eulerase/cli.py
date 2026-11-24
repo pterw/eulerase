@@ -13,21 +13,23 @@ from eulerase.errors import EuleraseError
 from eulerase.render import FIGURE_FORMATS, save_figure
 from eulerase.sequence import Record, parse_kmer_list, parse_records
 
-_NOT_BUILT = "The window is not built yet; give --seq, --kmers or --file."
-
 # Every option that is not an input and acts only on one: (flag, parser destination).
-_NEEDS_INPUT = (
-    ("-k", "k"),
-    ("--both-strands", "both_strands"),
-    ("--unique", "unique"),
-    ("--min-count", "min_count"),
-    ("--clip-tips", "clip_tips"),
+# The outputs are also refused with --gui, whose window writes nothing on the command line.
+_OUTPUTS = (
     ("--metrics", "metrics"),
     ("--figure", "figure"),
     ("--csv", "csv"),
     ("--gfa", "gfa"),
     ("--contigs", "contigs"),
     ("--genbank", "genbank"),
+)
+_NEEDS_INPUT = (
+    ("-k", "k"),
+    ("--both-strands", "both_strands"),
+    ("--unique", "unique"),
+    ("--min-count", "min_count"),
+    ("--clip-tips", "clip_tips"),
+    *_OUTPUTS,
 )
 
 
@@ -96,12 +98,21 @@ def _parser() -> argparse.ArgumentParser:
     p.add_argument("--contigs", metavar="PATH", help="write the contigs as a FASTA file")
     p.add_argument("--genbank", metavar="PATH", help="write the contigs as a GenBank file")
     p.add_argument("--metrics", action="store_true", help="print the assembly measures")
-    p.add_argument("--gui", action="store_true", help="open the window (not built yet)")
+    p.add_argument("--gui", action="store_true", help="open the window with the input loaded")
     return p
+
+
+def _given(args: argparse.Namespace, dest: str) -> bool:
+    value = getattr(args, dest)
+    return value is not None and value is not False  # 0 is a value the user gave
 
 
 def _refuse_ignored_options(args: argparse.Namespace, parser: argparse.ArgumentParser) -> None:
     """Exit 2 when an option was given that nothing would act on."""
+    if args.gui:
+        for flag, dest in _OUTPUTS:
+            if _given(args, dest):
+                parser.error(f"{flag} cannot be used with --gui: the window has its own exports.")
     if args.kmers is not None:
         if args.k is not None:
             parser.error(
@@ -109,8 +120,7 @@ def _refuse_ignored_options(args: argparse.Namespace, parser: argparse.ArgumentP
             )
     elif args.seq is None and args.file is None:
         for flag, dest in _NEEDS_INPUT:
-            value = getattr(args, dest)
-            if value is not None and value is not False:  # 0 is a value the user gave
+            if _given(args, dest):
                 parser.error(f"{flag} needs an input: give --seq, --kmers or --file.")
 
 
@@ -134,15 +144,51 @@ def _settings(args: argparse.Namespace) -> Settings:
     )
 
 
+def _form_text(args: argparse.Namespace) -> str:
+    """The input as the window's input box holds it."""
+    from eulerase.gui.presenter import records_to_text
+
+    if args.kmers is not None:
+        return " ".join(args.kmers)
+    if args.file is not None:
+        return records_to_text(io.read_records(args.file))
+    return "\n".join(args.seq)
+
+
+def _start_window(args: argparse.Namespace, has_input: bool) -> int:
+    """Open the window, with the input given loaded into it; the toolkit is imported only here."""
+    from eulerase.gui.presenter import FormValues
+
+    form = None
+    if has_input:
+        form = FormValues(
+            text=_form_text(args),
+            input_mode="kmers" if args.kmers is not None else "sequences",
+            k_text=str(DEFAULT_K if args.k is None else args.k),
+            both_strands=args.both_strands,
+            unique=args.unique,
+            min_multiplicity_text="" if args.min_count is None else str(args.min_count),
+            clip_tips=args.clip_tips,
+        )
+    try:
+        from eulerase.gui.app import start
+    except ImportError as err:
+        raise EuleraseError(
+            "The window needs tkinter, which this Python does not have; "
+            "the command-line options still work."
+        ) from err
+    return start(form)
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     sys.stdout.reconfigure(encoding="utf-8", newline="\n")
     parser = _parser()
     args = parser.parse_args(argv)
     _refuse_ignored_options(args, parser)
-    if args.gui or all(given is None for given in (args.seq, args.kmers, args.file)):
-        print(_NOT_BUILT, file=sys.stderr)
-        return 1
+    has_input = any(given is not None for given in (args.seq, args.kmers, args.file))
     try:
+        if args.gui or not has_input:
+            return _start_window(args, has_input)
         _check_output_paths(args)
         result = analyze(_records(args), _settings(args))
         _print_results(args, result)
