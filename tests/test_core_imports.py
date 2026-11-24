@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pytest
 from genomes import child_env
+from window_probe import blocked_code, child_code
 
 SRC = Path(__file__).resolve().parents[1] / "src"
 NON_CORE = {"render", "cli", "gui"}
@@ -14,7 +15,7 @@ NOT_DEPENDENCIES = ("pandas", "sklearn", "scipy")
 PROBE = (
     "import importlib, sys\n"
     "importlib.import_module(sys.argv[1])\n"
-    "found = [name for name in sys.argv[2:] if name in sys.modules]\n"
+    "found = [name for name in sys.argv[2:] if sys.modules.get(name) is not None]\n"
     "print(','.join(found))\n"
     "sys.exit(1 if found else 0)\n"
 )
@@ -30,8 +31,11 @@ def forbidden_for(module: str) -> tuple[str, ...]:
 
 def run_probe(module: str, env: dict[str, str]) -> subprocess.CompletedProcess:
     forbidden = forbidden_for(module.removeprefix("eulerase."))
+    # The gui package may import the toolkit, so its child runs under the window guard. Every
+    # other module must not import it: there any import of it raises, so the block is the check.
+    code = child_code(PROBE) if module.removeprefix("eulerase.") == "gui" else blocked_code(PROBE)
     return subprocess.run(
-        [sys.executable, "-c", PROBE, module, *forbidden],
+        [sys.executable, "-c", code, module, *forbidden],
         capture_output=True,
         text=True,
         timeout=60,
@@ -45,6 +49,7 @@ MODULES = [m.name for m in pkgutil.iter_modules([str(SRC / "eulerase")])]
 @pytest.mark.parametrize("module", ["eulerase", *(f"eulerase.{m}" for m in MODULES)])
 def test_module_imports_nothing_it_must_not(module):
     result = run_probe(module, child_env())
+    assert result.returncode != 3, "the window guard was not installed in the child"
     assert result.returncode == 0, f"{module}: {result.stdout.strip()} {result.stderr.strip()}"
 
 

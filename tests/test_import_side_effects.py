@@ -1,5 +1,6 @@
 """Importing the package or any of its modules must not touch the interpreter's global state."""
 
+import importlib.util
 import json
 import pkgutil
 import subprocess
@@ -9,6 +10,7 @@ from pathlib import Path
 
 import pytest
 from genomes import child_env
+from window_probe import child_code
 
 # The streams are replaced first, so the start is the same on every platform and is not what a
 # reconfigure would set. Prints a JSON list of what the imports changed (empty when clean).
@@ -60,13 +62,14 @@ def import_side_effects(
 ) -> list[str]:
     """Import `modules` in a child interpreter; list what changed in sys.path, streams, environ."""
     done = subprocess.run(
-        [sys.executable, "-c", PROBE, *modules],
+        [sys.executable, "-c", child_code(PROBE), *modules],
         capture_output=True,
         text=True,
         timeout=120,
         env=child_env() if env is None else dict(env),
         cwd=cwd,
     )
+    assert done.returncode != 3, "the window guard was not installed in the child"
     assert done.returncode == 0, done.stderr
     return json.loads(done.stdout)
 
@@ -75,6 +78,8 @@ PACKAGE_DIR = Path(__file__).resolve().parents[1] / "src" / "eulerase"
 MODULES = ["eulerase"] + [
     f"eulerase.{info.name}" for info in pkgutil.iter_modules([str(PACKAGE_DIR)])
 ]
+if importlib.util.find_spec("tkinter"):
+    MODULES.append("eulerase.gui.app")  # the window frame; the guard stops any root it builds
 
 
 @pytest.mark.parametrize("module", MODULES)
