@@ -281,6 +281,8 @@ class Presenter:
         self._step = 0
         self._total = 0
         self._token = 0
+        self._tick: object | None = None  # the one pending play timer
+        self._result: ResultView | None = None  # what the window shows
 
     @property
     def phase(self) -> str:
@@ -297,6 +299,10 @@ class Presenter:
     @property
     def total(self) -> int:
         return self._total
+
+    @property
+    def playing(self) -> bool:
+        return self._tick is not None
 
     def mode_changed(self, input_mode: str) -> None:
         self._view.set_k_enabled(input_mode == "sequences")
@@ -332,6 +338,7 @@ class Presenter:
         except EuleraseError as error:
             self._fail(str(error))
             return
+        self.pause()
         self._token += 1  # abandons any build still running
         self._clear_result()
         self._phase = BUSY
@@ -339,6 +346,8 @@ class Presenter:
         self._worker.start(self._job(records, settings, aspect, self._token))
 
     def stop(self) -> None:
+        # No tick to cancel: BUSY is entered only by build(), which pauses, and play() does
+        # nothing outside READY.
         if self._phase != BUSY:
             return
         self._token += 1
@@ -356,6 +365,7 @@ class Presenter:
         self._analysis = outcome.analysis
         self._phase = READY
         self._step = self._total = result.steps
+        self._result = result
         self._view.show_result(result)
         self._view.show_step(self._total, self._total)
         self._view.show_busy(False)
@@ -385,13 +395,84 @@ class Presenter:
 
         return job
 
+    def set_step(self, n: int) -> None:
+        n = max(0, min(n, self._total))
+        if n != self._step:
+            self._step = n
+            self._view.show_step(n, self._total)
+
+    def step_back(self) -> None:
+        self.set_step(self._step - 1)
+
+    def step_forward(self) -> None:
+        self.set_step(self._step + 1)
+
+    def step_start(self) -> None:
+        self.set_step(0)
+
+    def step_end(self) -> None:
+        self.set_step(self._total)
+
+    def play(self) -> None:
+        if self._phase != READY:
+            return
+        self._cancel_tick()  # at most one tick is ever pending
+        if self._step == self._total:
+            self.set_step(0)
+        self._view.set_playing(True)
+        self._schedule_tick()
+
+    def pause(self) -> None:
+        was_playing = self.playing
+        self._cancel_tick()
+        if was_playing:
+            self._view.set_playing(False)
+
+    def toggle_play(self) -> None:
+        if self.playing:
+            self.pause()
+        else:
+            self.play()
+
+    def row_selected(self, table: str, index: int) -> None:
+        if self._result is None or table != "Edges":
+            return
+        edges = next(t for t in self._result.tables if t.name == "Edges")
+        if 0 <= index < len(edges.rows):
+            self.set_step(int(edges.rows[index][edges.columns.index("global step")]))
+
+    def shutdown(self) -> None:
+        self._cancel_tick()
+
+    def quit(self) -> None:
+        self.shutdown()
+        self._view.close()
+
+    def _schedule_tick(self) -> None:
+        self._tick = self._scheduler.after(PLAY_INTERVAL_MS, self._on_tick)
+
+    def _on_tick(self) -> None:
+        self._tick = None
+        self.set_step(self._step + 1)
+        if self._step < self._total:
+            self._schedule_tick()
+        else:
+            self._view.set_playing(False)
+
+    def _cancel_tick(self) -> None:
+        if self._tick is not None:
+            self._scheduler.cancel(self._tick)
+            self._tick = None
+
     def _clear_result(self) -> None:
         self._analysis = None
         self._step = self._total = 0
+        self._result = None
         self._view.clear_result()
         self._view.set_exports_enabled(dict.fromkeys(EXPORT_KINDS, False))
 
     def _fail(self, message: str) -> None:
+        self.pause()
         self._phase = EMPTY
         self._clear_result()
         self._view.show_busy(False)
