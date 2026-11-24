@@ -323,30 +323,33 @@ def test_oracle_rejects_a_changed_byte():
     assert _first_difference(_TEN_GENBANK.replace("atgc", "atgg"), genbank_text(a)) is not None
 
 
-def _written_bytes(tmp_path: Path) -> list[bytes]:
+def _written(tmp_path: Path) -> list[tuple[str, bytes]]:
+    """Each text and the bytes of the file written from it. The Greek input reaches only the CSV
+    tables: the other writers refuse it."""
     a = _repeat()
     texts = {"a.fasta": fasta_text(a), "a.gb": genbank_text(a), "a.gfa": gfa_text(a)}
     texts |= {f"a_{table}.csv": csv_text(a, table) for table in TABLES}
+    greek = _analysis(["αβγαβγαβ"], k=3)
+    texts |= {f"g_{table}.csv": csv_text(greek, table) for table in TABLES}
+    assert any(not text.isascii() for text in texts.values())
     out = []
     for name, text in texts.items():
         write_text_file(tmp_path / name, text)
-        out.append((tmp_path / name).read_bytes())
+        out.append((text, (tmp_path / name).read_bytes()))
     return out
 
 
-@pytest.mark.xfail(
-    condition=sys.platform == "win32",
-    strict=True,
-    reason="R2: default text mode writes CRLF on Windows",
-)
 def test_written_files_use_lf_line_endings(tmp_path: Path):
-    for data in _written_bytes(tmp_path):
+    write_text_file(tmp_path / "ab.txt", "a\nb\n")
+    assert (tmp_path / "ab.txt").read_bytes() == b"a\nb\n"
+    for _, data in _written(tmp_path):
         assert b"\r" not in data
 
 
-def test_written_files_have_no_byte_order_mark(tmp_path: Path):
-    for data in _written_bytes(tmp_path):
+def test_written_files_are_utf8_without_a_byte_order_mark(tmp_path: Path):
+    for text, data in _written(tmp_path):
         assert not data.startswith(b"\xef\xbb\xbf")
+        assert data.decode("utf-8") == text
 
 
 # --- GFA and CSV -----------------------------------------------------------------------------

@@ -196,5 +196,5 @@ def csv_paths(prefix: str) -> dict[str, str]:
 
 
 def write_text_file(path: str | os.PathLike, text: str) -> None:
-    with open(path, "w", encoding="utf-8") as handle:
+    with open(path, "w", encoding="utf-8", newline="\n") as handle:
         handle.write(text)
