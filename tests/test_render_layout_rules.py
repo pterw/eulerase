@@ -1,9 +1,12 @@
 """Rules of the figure's plot: where labels, rings and words go, and the overview."""
 
+import dataclasses
+
 import pytest
 from figure_probe import INPUTS, SAVED_SIZE, SMALL_SIZE, drawn, elements, extent, inside, overlap
 from genomes import random_dna
 from matplotlib.backends.backend_agg import FigureCanvasAgg
+from matplotlib.colors import to_rgb
 from matplotlib.figure import Figure
 from matplotlib.patches import Circle
 
@@ -143,6 +146,8 @@ def test_above_the_overview_limit_the_plot_has_no_text_and_one_arrow_per_pair_of
     assert list(overview.axes[0].texts) == []
     assert len(elements(overview, "arrow")) == _pair_count(a)
     assert len(elements(overview, "node")) == nodes
+    at_start, _ = drawn(a, upto=0)  # no walk yet: every dot is ink, not the surface of a full node
+    assert {to_rgb(n.get_facecolor()) for n in elements(at_start, "node")} == {to_rgb(render.INK)}
 
 
 def _plot_of(a, size=SMALL_SIZE):
@@ -285,22 +290,18 @@ def test_a_label_that_does_not_fit_loses_its_marks_line_then_is_left_out_and_cou
         assert (got is None) == (marks is None)
 
 
-def test_the_labels_of_the_k_mers_are_asked_for_before_the_words_of_the_rings(monkeypatch):
-    asked = []
-    real = render.place_labels
-    monkeypatch.setattr(
-        render, "place_labels", lambda wanted, *rest: asked.extend(wanted) or real(wanted, *rest)
-    )
-    _plot_of(INPUTS["lemon"]())
-    kinds = [w.kind for w in asked]
-    assert set(kinds) == {"label", "word"}
-    assert kinds == sorted(kinds)  # every label before the first word
+def test_a_word_never_pushes_a_label_out_of_its_place(monkeypatch):
+    """The labels of the k-mers are placed before the words of the rings: with every word left
+    out (its ring still takes room), each label is where it was."""
+    a = INPUTS["overlap"]()
+    _, with_words = _plot_of(a, SAVED_SIZE)
+    assert any(gid.startswith("word:") for gid in with_words.placement.placed)
+    real = render._word
+    monkeypatch.setattr(render, "_word", lambda *args: dataclasses.replace(real(*args), spots=()))
+    _, without_words = _plot_of(a, SAVED_SIZE)
+    assert not any(gid.startswith("word:") for gid in without_words.placement.placed)
 
+    def label_boxes(plot):
+        return {g: p.box for g, p in plot.placement.placed.items() if g.startswith("label:")}
 
-def test_a_word_is_left_out_when_a_label_asked_first_took_its_only_spot():
-    spot = (render.Spot(*FIRST),)
-    label = render.Wanted("label:1:" + KMER, KMER, spot, 10.0, 10.0)
-    word = render.Wanted("word:start:1", KMER, spot, 10.0, 10.0, kind="word")
-    placement = render.place_labels([label, word], [], BOUNDS)
-    assert list(placement.placed) == [label.key]
-    assert (placement.shortened, placement.left_out) == (0, 1)
+    assert label_boxes(with_words) and label_boxes(with_words) == label_boxes(without_words)

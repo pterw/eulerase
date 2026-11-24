@@ -6,21 +6,13 @@ import pytest
 from figure_probe import INPUTS, SAVED_SIZE, SMALL_SIZE, drawn, elements, extent, overlap
 from genomes import random_dna
 from matplotlib.backends.backend_agg import FigureCanvasAgg
-from matplotlib.colors import to_rgb
 from matplotlib.figure import Figure
-from matplotlib.patches import Circle, FancyArrowPatch
+from matplotlib.patches import Circle
 
 from eulerase import render
 from eulerase.analysis import Settings, analyze, settings_text
 from eulerase.errors import EuleraseError
-from eulerase.render import (
-    FUTURE,
-    MAX_DRAW_NODES,
-    TRAIL_COLORS,
-    compute_layout,
-    draw_figure,
-    save_figure,
-)
+from eulerase.render import MAX_DRAW_NODES, compute_layout, draw_figure, save_figure
 from eulerase.sequence import Record
 
 
@@ -76,21 +68,6 @@ def test_every_node_is_drawn_visibly_and_apart(name, size):
     fig, _ = drawn(a, size)
     assert len(elements(fig, "node")) == len(a.nodes)
     assert _disc_defects(fig) == []
-
-
-def test_a_step_marks_only_the_traversed_edges():
-    a = _analysis(PATH)
-    assert [len(t) for t in a.trails] == [10]
-    fig, _ = _figure(a, upto=3)
-    arrows = [p for p in fig.axes[0].patches if isinstance(p, FancyArrowPatch)]
-    past = [p for p in arrows if p.get_edgecolor()[:3] == to_rgb(TRAIL_COLORS[0])]
-    future = [p for p in arrows if p.get_edgecolor()[:3] == to_rgb(FUTURE)]
-    assert (len(past), len(future)) == (3, 7)
-
-
-def test_a_figure_with_three_trails_has_a_visible_legend():
-    fig, _ = drawn(INPUTS["three"]())
-    assert [legend for legend in fig.legends if legend.get_visible()]
 
 
 def test_figure_title_carries_the_settings():

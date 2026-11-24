@@ -2,6 +2,7 @@
 
 import math
 import os
+import textwrap
 from collections import defaultdict
 from dataclasses import dataclass
 from pathlib import Path
@@ -42,6 +43,36 @@ OVERVIEW_ABOVE_NODES = 60
 MAX_COPY_MARKS = 6
 FIGURE_ASPECT = 1.6  # width over height of the plot area of a saved figure
 FIGURE_FORMATS = ("png", "svg", "pdf")
+
+
+def trail_style(trail: int) -> tuple[str, str]:
+    """The colour and the dash of trail `trail`, counted from 1: no two of the first nine trails
+    share both."""
+    colour = TRAIL_COLORS[(trail - 1) % len(TRAIL_COLORS)]
+    return colour, TRAIL_DASHES[((trail - 1) // len(TRAIL_COLORS)) % len(TRAIL_DASHES)]
+
+
+@dataclass(frozen=True)
+class LegendEntry:
+    """One line of the legend: its label, the colour and dash of its sample, and what it explains
+    (`kind` is "trail", "start" or "end")."""
+
+    label: str
+    color: str
+    dash: str
+    kind: str
+
+
+def legend_entries(a: Analysis) -> tuple[LegendEntry, ...]:
+    """The legend of the figure and of the window's strip: each trail by its number, then the
+    solid ring of a start and the dashed ring of an end."""
+    trails = tuple(
+        LegendEntry(f"trail {t}", *trail_style(t), "trail") for t in range(1, len(a.trails) + 1)
+    )
+    return trails + (
+        LegendEntry("start ring", INK, TRAIL_DASHES[0], "start"),
+        LegendEntry("end ring", INK, TRAIL_DASHES[1], "end"),
+    )
 
 
 def _walk_graph(a: Analysis) -> nx.MultiDiGraph:
@@ -247,6 +278,12 @@ SIBLING_RAD = 0.52  # the bend between two arrows between the same two nodes
 REVERSE_RAD = 0.22  # the bend of an arrow whose pair of nodes has an arrow back
 NODE_FONTS = (10.0, 8.5, 7.5)  # node letters, when up to 3, up to 5, and more letters fit
 OVERVIEW_WEIGHT = 0.5  # line width and arrowhead of an overview arrow, against a full one
+BAND_WIDTH = 7.0  # line width of the lemon band under the current arrow
+NODE_LINE = 1.5  # outline of a node
+CURRENT_NODE_LINE = 3.0  # outline of the current node: wider, so the cue does not rely on colour
+MARK_PITCH = 6.0  # the most room one copy mark takes along its line, in points
+MARK_RADIUS = 0.4  # of a mark, in pitches
+COUNT_PT = 5.5  # font size of the count of copies used, above the copy limit
 
 
 @dataclass(frozen=True)
@@ -279,30 +316,54 @@ class _Plan:
 
 @dataclass
 class _Arrow:
+    """An arrow with what is drawn for it: its lemon band, its label, and under the label either
+    one mark for each copy or a count of the copies used. Everything exists from the start."""
+
     patch: FancyArrowPatch
+    band: FancyArrowPatch
     label: Text | None
-    steps: tuple[tuple[int, int], ...]
+    marks: list[Circle]
+    count: Text | None
+    steps: tuple[tuple[int, int], ...]  # (global step, trail) of each copy
     weight: float
+
+    def style(self, upto: int) -> None:
+        """Restyle the arrow, its band, its label and its marks for the first `upto` steps."""
+        used = [trail for step, trail in self.steps if step <= upto]
+        active = any(step == upto for step, _ in self.steps)
+        colour, line = trail_style(used[0]) if used else (FUTURE, TRAIL_DASHES[0])
+        self.patch.set_color(colour)
+        self.patch.set_linestyle(line)
+        self.patch.set_linewidth(self.weight * (2.4 if active else 1.6 if used else 1.0))
+        self.patch.set_mutation_scale(self.weight * (11 if used else 8))
+        self.patch.set_zorder(3 if used else 1)
+        self.band.set_visible(active)
+        if self.label is not None:
+            self.label.set_color(INK if used else MUTED)
+            self.label.set_fontweight("bold" if active else "normal")
+            self.label.get_bbox_patch().set_facecolor(LEMON if active else SURFACE)
+        for copy, mark in enumerate(self.marks):
+            mark.set_fill(copy < len(used))
+        if self.count is not None:
+            self.count.set_text(f"{len(used)}/{len(self.steps)}")
 
 
 @dataclass
 class _Plot:
     arrows: list[_Arrow]
-    placement: Placement  # of the labels and words: what WQ draws the marks by, and the counts
+    nodes: dict[str, Circle]
+    targets: dict[int, str]  # the node each step of the walk arrives at, by global step
+    overview: bool
+    placement: Placement  # of the labels and words: what the marks go by, and the counts
 
     def style(self, upto: int) -> None:
-        """Restyle the arrows and their labels for the first `upto` steps of the walk."""
+        """Restyle the arrows, labels, marks and nodes for the first `upto` steps of the walk."""
         for arrow in self.arrows:
-            used = [trail for step, trail in arrow.steps if step <= upto]
-            active = any(step == upto for step, _ in arrow.steps)
-            patch = arrow.patch
-            patch.set_color(TRAIL_COLORS[(used[0] - 1) % len(TRAIL_COLORS)] if used else FUTURE)
-            patch.set_linewidth(arrow.weight * (2.4 if active else 1.6 if used else 1.0))
-            patch.set_mutation_scale(arrow.weight * (11 if used else 8))
-            patch.set_zorder(3 if used else 1)
-            if arrow.label is not None:
-                arrow.label.set_color(INK if used else MUTED)
-                arrow.label.set_fontweight("bold" if active else "normal")
+            arrow.style(upto)
+        for node, disc in self.nodes.items():
+            current = self.targets.get(upto) == node
+            disc.set_facecolor(LEMON if current else INK if self.overview else SURFACE)
+            disc.set_linewidth(CURRENT_NODE_LINE if current else 0 if self.overview else NODE_LINE)
 
 
 def _arc_point(p0: Point, p1: Point, rad: float, t: float) -> Point:
@@ -462,19 +523,12 @@ def _label(plan: _Plan) -> Wanted:
     )
 
 
-def _add_node(ax, node: str, centre: Point, sizes: _Sizes, overview: bool) -> None:
+def _add_node(ax, node: str, centre: Point, sizes: _Sizes, overview: bool) -> Circle:
     x, y = centre[0] / sizes.scale, centre[1] / sizes.scale
-    ax.add_patch(
-        Circle(
-            (x, y),
-            sizes.radius / sizes.scale,
-            facecolor=INK if overview else SURFACE,
-            edgecolor=INK,
-            linewidth=0 if overview else 1.5,
-            zorder=4,
-            gid=f"node:{node}",
-        )
-    )
+    disc = Circle(
+        (x, y), sizes.radius / sizes.scale, edgecolor=INK, zorder=4, gid=f"node:{node}"
+    )  # its fill and outline are the plot's `style`
+    ax.add_patch(disc)
     if not overview:
         ax.text(
             x,
@@ -489,6 +543,7 @@ def _add_node(ax, node: str, centre: Point, sizes: _Sizes, overview: bool) -> No
             zorder=6,
             gid=f"letters:{node}",
         )
+    return disc
 
 
 def _add_ring(ax, kind: str, trail: int, centre: Point, radius: float, scale: float) -> None:
@@ -525,18 +580,61 @@ def _add_text(ax, key: str, placed: Placed, scale: float) -> Text:
     )
 
 
-def _add_arrow(ax, plan: _Plan, scale: float, label: Text | None, weight: float) -> _Arrow:
-    patch = FancyArrowPatch(
-        (plan.p0[0] / scale, plan.p0[1] / scale),
-        (plan.p1[0] / scale, plan.p1[1] / scale),
-        connectionstyle=f"arc3,rad={plan.rad}",
-        arrowstyle="-|>",
-        shrinkA=0,
-        shrinkB=0,
-        gid=plan.gid,
+def _add_marks(ax, plan: _Plan, placed: Placed, scale: float) -> tuple[list[Circle], Text | None]:
+    """The line under a label that kept room for it: one mark for each copy of the k-mer, or, above
+    MAX_COPY_MARKS copies, one text for the copies used. It lies in the lowest MARKS_LINE_H of the
+    label's box, inside its padding."""
+    x0, y0, x1, _ = placed.box
+    x, y = (x0 + x1) / 2 / scale, (y0 + LABEL_PAD + MARKS_LINE_H / 2) / scale
+    copies = len(plan.steps)
+    if copies > MAX_COPY_MARKS:
+        widest = len(f"{copies}/{copies}") * MONO_ADVANCE
+        size = min(COUNT_PT, (x1 - x0) / widest)  # the count stays inside the label's width
+        count = ax.text(
+            x, y, "", ha="center", va="center", family=MONO, fontsize=size, color=INK, zorder=5
+        )
+        count.set_gid(f"count:{plan.name}")
+        return [], count
+    pitch = min(MARK_PITCH, (x1 - x0) / copies)
+    marks = [
+        Circle(
+            (x + (i - (copies - 1) / 2) * pitch / scale, y),
+            MARK_RADIUS * pitch / scale,
+            edgecolor=INK,
+            facecolor=trail_style(plan.steps[0][1])[0],
+            linewidth=0.8,
+            zorder=5,
+            gid=f"mark:{plan.name}",
+        )
+        for i in range(copies)
+    ]
+    for mark in marks:
+        ax.add_patch(mark)
+    return marks, None
+
+
+def _add_arrow(
+    ax, plan: _Plan, scale: float, label: Text | None, here: Placed | None, weight: float
+) -> _Arrow:
+    """The arrow of `plan` with its band under it and, when its label (`label`, placed at `here`)
+    is drawn with a line of marks, those marks."""
+    ends = ((plan.p0[0] / scale, plan.p0[1] / scale), (plan.p1[0] / scale, plan.p1[1] / scale))
+    shape = dict(connectionstyle=f"arc3,rad={plan.rad}", shrinkA=0, shrinkB=0)
+    patch = FancyArrowPatch(*ends, arrowstyle="-|>", gid=plan.gid, **shape)
+    band = FancyArrowPatch(
+        *ends,
+        arrowstyle="-",
+        color=LEMON,
+        linewidth=BAND_WIDTH * weight,
+        zorder=2,
+        visible=False,
+        gid=f"band:{plan.name}",
+        **shape,
     )
+    ax.add_patch(band)
     ax.add_patch(patch)
-    return _Arrow(patch, label, plan.steps, weight)
+    marks, count = _add_marks(ax, plan, here, scale) if here and here.marks else ([], None)
+    return _Arrow(patch, band, label, marks, count, plan.steps, weight)
 
 
 def _build_plot(ax, a: Analysis, layout: dict[str, Point], aspect: float) -> _Plot:
@@ -550,7 +648,7 @@ def _build_plot(ax, a: Analysis, layout: dict[str, Point], aspect: float) -> _Pl
     ax.set_aspect("equal", adjustable="box")
     ax.apply_aspect()  # the box the axes will have, so its size in points is known now
     if not layout:
-        return _Plot([], Placement({}, 0, 0))
+        return _Plot([], {}, {}, overview, Placement({}, 0, 0))
     scale = ax.get_position().height * ax.figure.get_figheight() * 72
     sizes = _sizes(layout, scale, overview)
     pos = {node: (x * scale, y * scale) for node, (x, y) in layout.items()}
@@ -570,69 +668,112 @@ def _build_plot(ax, a: Analysis, layout: dict[str, Point], aspect: float) -> _Pl
     wanted += [_word(kind, t, pos[node], room[node]) for kind, t, node in rings]
     placement = place_labels(wanted, blocked, bounds)
 
-    for node, centre in pos.items():
-        _add_node(ax, node, centre, sizes, overview)
+    nodes = {node: _add_node(ax, node, centre, sizes, overview) for node, centre in pos.items()}
     for (kind, t, node), radius in zip(rings, ring_radii):
         _add_ring(ax, kind, t, pos[node], radius, scale)
-    texts = {key: _add_text(ax, key, text, scale) for key, text in placement.placed.items()}
+    placed = placement.placed
+    texts = {key: _add_text(ax, key, text, scale) for key, text in placed.items()}
     weight = OVERVIEW_WEIGHT if overview else 1.0
-    arrows = [_add_arrow(ax, plan, scale, texts.get(plan.label_gid), weight) for plan in plans]
-    return _Plot(arrows, placement)
+    arrows = [
+        _add_arrow(ax, p, scale, texts.get(p.label_gid), placed.get(p.label_gid), weight)
+        for p in plans
+    ]
+    targets = {s.global_step: s.target for trail in a.trails for s in trail}
+    return _Plot(arrows, nodes, targets, overview, placement)
 
 
-def _legend_and_title(fig: Figure, a: Analysis) -> None:
-    elements = []
-    if len(a.trails) > 1:
-        for i, t in enumerate(a.trails, 1):
-            c = TRAIL_COLORS[(i - 1) % len(TRAIL_COLORS)]
-            elements.append(Line2D([0], [0], color=c, lw=2.2, label=f"trail {i} ({len(t)} edges)"))
-    else:
-        elements.append(
-            Line2D([0], [0], color=TRAIL_COLORS[0], lw=2.0, label="Eulerian path/circuit")
-        )
-    if a.trails:
-        for label in ("start", "end"):
-            elements.append(
-                Line2D(
-                    [0],
-                    [0],
-                    marker="o",
-                    color="w",
-                    markerfacecolor=SURFACE,
-                    markeredgecolor=INK,
-                    markersize=9,
-                    label=label,
-                )
-            )
-    elements.append(Line2D([0], [0], color=FUTURE, lw=1.2, label="future edge"))
+# ---------------------------------------------------------------------------
+# The frame of a figure: headline, reading line and settings above the plot; the left-out text and
+# the legend below it. Sizes come from character counts and font sizes, never from the renderer.
+# ---------------------------------------------------------------------------
+FRAME_MARGIN = 8.0  # points between the frame and the edge of the figure
+FRAME_GAP = 3.0  # points between two parts of the frame
+HEADLINE_PT, FRAME_PT = 10.5, 7.5  # font sizes of the headline and of every other frame text
+LINE_PITCH = 1.3  # height of a line of frame text, in em, descenders and line gap included
+SANS_ADVANCE, BOLD_ADVANCE = 0.58, 0.68  # widest likely average of a character, in em
+LEGEND_HANDLE_EM = 2.8  # the sample and the room round it, in em
+LEGEND_COLUMN_GAP_EM = 2.0
+READING = "Grey arrows are not walked yet. One mark for each copy of a k-mer; filled when used."
 
-    fig.legend(
-        handles=elements,
-        loc="upper left",
-        bbox_to_anchor=(0.02, 0.98),
-        frameon=True,
-        facecolor=SURFACE,
-        edgecolor=RULE,
-        fontsize=8.5,
-    )
-    fig.suptitle(
-        f"{a.headline}\n{settings_text(a.settings)}",
-        fontsize=12,
-        fontweight="bold",
-        color=INK,
-        y=0.96,
-        wrap=True,
-    )
-    note = " · ".join(a.notes)
-    if note:
+
+def _wrapped(text: str, pt: float, advance: float, width: float) -> tuple[str, int]:
+    """`text` broken into lines that fit `width` points by character count, and their number."""
+    wrapped = textwrap.fill(text, width=max(8, int(width / (pt * advance))))
+    return wrapped, wrapped.count("\n") + 1
+
+
+def _draw_header(fig: Figure, a: Analysis) -> float:
+    """The headline, the reading line and the settings line, from the top left, wrapped to the
+    figure's width. Returns the height they take, in points."""
+    width, height = fig.get_figwidth() * 72, fig.get_figheight() * 72
+    used = FRAME_MARGIN
+    for gid, text, pt, bold in (
+        ("headline", a.headline, HEADLINE_PT, True),
+        ("reading", READING, FRAME_PT, False),
+        ("settings", settings_text(a.settings), FRAME_PT, False),
+    ):
+        advance = BOLD_ADVANCE if bold else SANS_ADVANCE
+        lines, count = _wrapped(text, pt, advance, width - 2 * FRAME_MARGIN)
         fig.text(
-            0.5,
-            0.058,
-            note.strip(" |"),
-            ha="center",
+            FRAME_MARGIN / width,
+            1 - used / height,
+            lines,
+            ha="left",
+            va="top",
+            fontsize=pt,
+            fontweight="bold" if bold else "normal",
+            color=INK if bold else MUTED,
+            gid=gid,
+        )
+        used += count * pt * LINE_PITCH + FRAME_GAP
+    return used
+
+
+def _legend_columns(labels: list[str], width: float) -> int:
+    """How many columns of the legend fit `width` points, taking every column as wide as the
+    widest label: at least 1, at most one for each entry."""
+    unit = FRAME_PT * SANS_ADVANCE
+    gap = LEGEND_COLUMN_GAP_EM * FRAME_PT
+    sample = LEGEND_HANDLE_EM * FRAME_PT
+    fit = int((width + gap) // (sample + gap + unit * max(map(len, labels))))
+    return max(1, min(len(labels), fit))
+
+
+def _draw_legend(fig: Figure, a: Analysis) -> float:
+    """The legend of `legend_entries`, along the bottom edge. Returns the height it takes."""
+    entries = legend_entries(a)
+    width, height = fig.get_figwidth() * 72, fig.get_figheight() * 72
+    columns = _legend_columns([e.label for e in entries], width - 2 * FRAME_MARGIN)
+    rows = math.ceil(len(entries) / columns)
+    handles = [
+        Line2D([0], [0], color=e.color, linestyle=e.dash, lw=2.2, label=e.label) for e in entries
+    ]
+    fig.legend(
+        handles=handles,
+        loc="lower left",
+        bbox_to_anchor=(FRAME_MARGIN / width, FRAME_MARGIN / height),
+        borderaxespad=0,
+        ncols=columns,
+        frameon=False,
+        fontsize=FRAME_PT,
+    )
+    return rows * FRAME_PT * LINE_PITCH + (rows - 1) * 0.5 * FRAME_PT + 0.8 * FRAME_PT
+
+
+def _draw_left_out(fig: Figure, plot: _Plot, bottom: float) -> None:
+    """One text for the labels shortened and the labels left out, when either is above 0, with
+    its lower edge `bottom` points above the figure's."""
+    shortened, left_out = plot.placement.shortened, plot.placement.left_out
+    if shortened or left_out:
+        fig.text(
+            FRAME_MARGIN / (fig.get_figwidth() * 72),
+            bottom / (fig.get_figheight() * 72),
+            f"Labels: {shortened} shortened (no copy marks), {left_out} left out.",
+            ha="left",
             va="bottom",
-            fontsize=8,
+            fontsize=FRAME_PT,
             color=MUTED,
+            gid="left-out",
         )
 
 
@@ -662,9 +803,21 @@ def draw_figure(
             gid="note",
         )
         return
+    width, height = fig.get_figwidth() * 72, fig.get_figheight() * 72
+    top = _draw_header(fig, a)
+    footer = FRAME_MARGIN + _draw_legend(fig, a) + FRAME_GAP
+    bottom = footer + FRAME_PT * LINE_PITCH + FRAME_GAP  # the left-out text lies above the legend
+    ax.set_position(
+        (
+            FRAME_MARGIN / width,
+            bottom / height,
+            1 - 2 * FRAME_MARGIN / width,
+            max(0.05, 1 - (top + bottom) / height),
+        )
+    )
     plot = _build_plot(ax, a, layout, FIGURE_ASPECT)
     plot.style(sum(len(trail) for trail in a.trails) if upto is None else upto)
-    _legend_and_title(fig, a)
+    _draw_left_out(fig, plot, footer)
 
 
 def save_figure(a: Analysis, path: str | os.PathLike) -> None:

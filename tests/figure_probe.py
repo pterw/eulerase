@@ -3,8 +3,11 @@
 Flat import, as `genomes.py`: `from figure_probe import ...`.
 """
 
+from genomes import random_dna
 from matplotlib.backends.backend_agg import FigureCanvasAgg
 from matplotlib.figure import Figure
+from matplotlib.legend import Legend
+from matplotlib.text import Text
 
 from eulerase.analysis import Settings, analyze
 from eulerase.render import FIGURE_ASPECT, compute_layout, draw_figure
@@ -28,7 +31,18 @@ INPUTS = {
     "three": lambda: _reads("ACGTACGGA", "TTGCCATTAGGC", "GGATCCTTAAGCATGC", k=5),
     # one trail that ends where it starts
     "circuit": lambda: _reads("ACGTAC", k=3),
+    # one trail in which the 3-mer ABC is seen three times
+    "repeated": lambda: _reads("ABCXABCYABCZ", k=3),
+    # three trails of 2, 11 and 6 steps; the 3-mer BAB is seen more than once in two of them
+    "shared": lambda: _reads("AACBABABC", "BABABXC", "XABBBCBCB", k=3),
 }
+
+
+# Ten disjoint trails of ten different lengths (111 nodes: above the overview limit, which a test
+# of the full drawing raises), so that the trail colour and the dash pattern both wrap.
+def ten():
+    reads = (random_dna(8 + 2 * i if i < 5 else 9 + 2 * i, seed=110 + i) for i in range(10))
+    return _reads(*reads, k=5)
 
 
 def drawn(a, size=SAVED_SIZE, upto=None, layout=None):
@@ -70,3 +84,41 @@ def overlap(first, second, margin=1.0):
 def inside(box, fig):
     """True when the box lies inside the figure's own box."""
     return box[0] >= 0 and box[1] >= 0 and box[2] <= fig.bbox.width and box[3] <= fig.bbox.height
+
+
+DASH_NAMES = {"-": "solid", "--": "dashed", ":": "dotted"}
+DASH_NAMES |= {name: name for name in ("solid", "dashed", "dotted")}
+
+
+def dash(artist):
+    """The line style of a patch or a line, as one of "solid", "dashed", "dotted"."""
+    return DASH_NAMES[artist.get_linestyle()]
+
+
+def built(a, size=SAVED_SIZE, upto=None, layout=None):
+    """Like `drawn`, without rendering: enough for the properties of the elements."""
+    if layout is None:
+        layout = compute_layout(a, FIGURE_ASPECT)
+    fig = Figure(figsize=size)
+    FigureCanvasAgg(fig)
+    draw_figure(fig, a, layout, upto)
+    return fig
+
+
+def frame(fig, role):
+    """The figure-level texts (outside the plot axes) whose `gid` is `role`."""
+    return [t for t in fig.texts if t.get_gid() == role]
+
+
+def legends(fig):
+    """Every visible legend of the figure and of its axes."""
+    found = fig.findobj(Legend)
+    return [legend for legend in found if legend.get_visible()]
+
+
+def visible_texts(fig):
+    """Every visible, non-empty text of the figure, but not the legend's own label texts."""
+    own = {text for legend in legends(fig) for text in legend.get_texts()}
+    return [
+        t for t in fig.findobj(Text) if t.get_visible() and t.get_text().strip() and t not in own
+    ]
