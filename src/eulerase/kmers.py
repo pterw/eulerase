@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from eulerase.errors import EuleraseError
 from eulerase.sequence import Record, require_dna, reverse_complement
 
-MAX_KMERS = 500_000
+MAX_KMERS = 300_000
 
 
 @dataclass(frozen=True)
