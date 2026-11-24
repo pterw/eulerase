@@ -2,9 +2,12 @@
 
 import csv
 import io
+import re
+import sys
 from pathlib import Path
 
 import matplotlib
+import pytest
 from Bio import SeqIO
 from genomes import random_dna
 
@@ -106,8 +109,19 @@ def test_csv_writes_the_five_tables(tmp_path, capsys):
     assert len({Path(p).read_bytes() for p in written.values()}) == 5  # each table is its own
 
 
-def test_wrote_lines_come_in_the_frozen_order(tmp_path, capsys):
-    paths = _paths(tmp_path)
+def test_wrote_lines_come_in_the_frozen_order_and_print_each_path_as_typed(
+    tmp_path, capsys, monkeypatch
+):
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "sub").mkdir()
+    # Relative, so a line that resolved or made the path absolute would differ from what was typed.
+    paths = {
+        "figure": "graph.png",
+        "csv": "./tables",
+        "gfa": "out.gfa",
+        "contigs": "sub/out.fasta",
+        "genbank": "sub/out.gb",
+    }
     # Typed in an order unlike the output order, so the order cannot come from the command line.
     argv = [
         "--seq", _SEQ, "-k", "4",
@@ -133,8 +147,11 @@ def test_figure_for_a_graph_over_the_drawing_limit_says_why(tmp_path, capsys):
     with matplotlib.rc_context({"svg.fonttype": "none"}):  # keep the text readable in the file
         lines = _run(capsys, "--seq", sequence, "-k", "9", "--figure", str(over))
     assert lines[-1] == f"Wrote {over}"
-    text = over.read_text("utf-8")
-    assert f"{nodes}" in text and "400" in text
+    svg = over.read_text("utf-8")
+    # Only the drawn text counts: a full drawing has "400" in coordinates and the node count in
+    # its headline, but no one text element that holds both.
+    texts = re.findall(r"<text[^>]*>([^<]*)</text>", svg)
+    assert any(f"{nodes}" in t and "400" in t for t in texts)
 
 
 def test_failed_output_is_an_error_after_the_earlier_files(tmp_path, capsys):
@@ -156,3 +173,121 @@ def test_oracle_rejects_a_wrong_file_order(tmp_path, capsys):
     csv_files = list(eio.csv_paths(paths["csv"]).values())
     wrong = [paths["gfa"], paths["figure"], *csv_files, paths["contigs"], paths["genbank"]]
     assert lines[-9:] != [f"Wrote {p}" for p in wrong]
+
+
+_BAD_OPTIONS = ("--figure", "--csv", "--gfa", "--contigs", "--genbank")
+_BAD_NAMES = {
+    "--figure": "x.png",
+    "--csv": "x",
+    "--gfa": "x.gfa",
+    "--contigs": "x.fasta",
+    "--genbank": "x.gb",
+}
+
+
+def _assert_refused_before_any_work(tmp_path, capsys, monkeypatch, option, run, bad=None):
+    """`run(argv)` must refuse a bad `option` path with one stderr line, no output, no file.
+
+    `bad` replaces the missing-folder path with its own arguments and the exact error line.
+    """
+    calls = []
+
+    def spy(*args, **kwargs):
+        calls.append(args)
+        raise AssertionError("the analysis ran before the output paths were checked")
+
+    monkeypatch.setattr(cli, "analyze", spy)
+    missing = tmp_path / "missing"
+    arguments, line = bad or ([option, str(missing / _BAD_NAMES[option])], None)
+    # The good option is a different one that the command writes first, where the order allows.
+    good_option = "--csv" if option == "--figure" else "--figure"
+    good = str(tmp_path / ("good" if good_option == "--csv" else "good.png"))
+    good_file = Path(eio.csv_paths(good)["edges"] if good_option == "--csv" else good)
+    assert not missing.exists() and not good_file.exists() and good not in arguments
+
+    code = run(["--seq", _SEQ, "-k", "4", good_option, good, *arguments])
+    out, err = capsys.readouterr()
+
+    assert code == 1
+    assert err.startswith("eulerase: ") and err.count("\n") == 1 and option in err
+    assert line is None or err == line
+    assert out == ""
+    assert not good_file.exists()
+    assert calls == []
+
+
+@pytest.mark.parametrize("option", [*_BAD_OPTIONS, "same file"])
+def test_a_bad_output_path_fails_before_any_output_is_written(
+    tmp_path, capsys, monkeypatch, option
+):
+    bad = None
+    if option == "same file":
+        # The second spelling reaches the first csv-set file through "..": same file, other text.
+        clash = f"{tmp_path}/elsewhere/../tables_edges.csv"
+        line = (
+            f"eulerase: --csv and --genbank name the same file {clash}; "
+            "give each output its own path.\n"
+        )
+        option, bad = "--csv", (["--csv", str(tmp_path / "tables"), "--genbank", clash], line)
+    _assert_refused_before_any_work(tmp_path, capsys, monkeypatch, option, cli.main, bad)
+
+
+def test_a_folder_that_cannot_be_written_is_refused(tmp_path, capsys, monkeypatch):
+    monkeypatch.setattr(cli.os, "access", lambda *a, **k: False)
+    code = cli.main(["--seq", _SEQ, "-k", "4", "--gfa", str(tmp_path / "a.gfa")])
+    out, err = capsys.readouterr()
+    assert code == 1 and out == "" and err.count("\n") == 1 and "--gfa" in err
+    assert not (tmp_path / "a.gfa").exists()
+
+
+@pytest.mark.parametrize("name", ["graph.bmp", "graph"])
+def test_unsupported_figure_format_is_refused(tmp_path, capsys, name):
+    target = tmp_path / name
+    code = cli.main(
+        ["--seq", _SEQ, "-k", "4", "--gfa", str(tmp_path / "a.gfa"), "--figure", str(target)]
+    )
+    out, err = capsys.readouterr()
+    assert code == 1
+    assert err.startswith("eulerase: ") and err.count("\n") == 1 and "--figure" in err
+    assert out == ""
+    assert not target.exists() and not (tmp_path / "a.gfa").exists()
+
+
+def test_output_path_that_is_a_directory_is_refused(tmp_path, capsys):
+    folder = tmp_path / "out.gfa"
+    folder.mkdir()
+    code = cli.main(
+        ["--seq", _SEQ, "-k", "4", "--figure", str(tmp_path / "g.png"), "--gfa", str(folder)]
+    )
+    out, err = capsys.readouterr()
+    assert code == 1
+    assert err.startswith("eulerase: ") and err.count("\n") == 1 and "--gfa" in err
+    assert out == "" and not (tmp_path / "g.png").exists()
+
+
+def test_a_write_that_fails_after_the_preflight_is_one_line(tmp_path, capsys, monkeypatch):
+    def refuse(path, text):
+        raise PermissionError("access denied")
+
+    monkeypatch.setattr(eio, "write_text_file", refuse)
+    target = str(tmp_path / "out.gfa")
+    code = cli.main(["--seq", _SEQ, "-k", "4", "--gfa", target])
+    out, err = capsys.readouterr()
+    assert code == 1
+    assert err == f"eulerase: cannot write {target}: access denied\n"
+    assert "Traceback" not in err
+
+
+def test_oracle_rejects_a_late_failure(tmp_path, capsys, monkeypatch):
+    def writes_then_fails(argv):
+        Path(argv[argv.index("--figure") + 1]).write_bytes(b"x")
+        print("eulerase: late", file=sys.stderr)
+        return 1
+
+    def analyses_then_fails(argv):
+        cli.analyze([], None)  # the spy that the check installs
+        return 1
+
+    for stub in (writes_then_fails, analyses_then_fails):
+        with pytest.raises(AssertionError):
+            _assert_refused_before_any_work(tmp_path, capsys, monkeypatch, "--gfa", stub)

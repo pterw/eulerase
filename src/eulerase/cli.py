@@ -1,13 +1,16 @@
 """The eulerase command: read the input, analyse it, print the headline and the trails."""
 
 import argparse
+import os
 import sys
-from collections.abc import Sequence
+from collections.abc import Iterator, Sequence
+from contextlib import contextmanager
+from pathlib import Path
 
 from eulerase import io
-from eulerase.analysis import DEFAULT_K, Analysis, Settings, analyze, format_cell, rows
+from eulerase.analysis import DEFAULT_K, TABLES, Analysis, Settings, analyze, format_cell, rows
 from eulerase.errors import EuleraseError
-from eulerase.render import save_figure
+from eulerase.render import FIGURE_FORMATS, save_figure
 from eulerase.sequence import Record, parse_kmer_list, parse_records
 
 _NOT_BUILT = "The window is not built yet; give --seq, --kmers or --file."
@@ -140,6 +143,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(_NOT_BUILT, file=sys.stderr)
         return 1
     try:
+        _check_output_paths(args)
         result = analyze(_records(args), _settings(args))
         _print_results(args, result)
         _write_outputs(args, result)
@@ -147,6 +151,56 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(f"eulerase: {err}", file=sys.stderr)
         return 1
     return 0
+
+
+def _output_paths(args: argparse.Namespace) -> list[tuple[str, str]]:
+    """Every file the command would write, as (option, path)."""
+    paths = [("--figure", args.figure)] if args.figure else []
+    if args.csv:
+        paths += [("--csv", path) for path in io.csv_paths(args.csv).values()]
+    for option in ("--gfa", "--contigs", "--genbank"):
+        if getattr(args, option[2:]):
+            paths.append((option, getattr(args, option[2:])))
+    return paths
+
+
+def _check_output_paths(args: argparse.Namespace) -> None:
+    """Refuse the first output that cannot be written, before any work is done."""
+    named: dict[str, str] = {}  # file, as the system sees it -> the option that names it
+    for option, path in _output_paths(args):
+        file = os.path.normcase(os.path.abspath(path))
+        if file in named:
+            raise EuleraseError(
+                f"{named[file]} and {option} name the same file {path}; "
+                "give each output its own path."
+            )
+        named[file] = option
+        target = Path(path)
+        folder = target.parent
+        if option == "--figure" and target.suffix.lower().lstrip(".") not in FIGURE_FORMATS:
+            formats = ", ".join(f".{f}" for f in FIGURE_FORMATS)
+            raise EuleraseError(
+                f"--figure '{path}' is not a figure format; end the name in {formats}."
+            )
+        if target.is_dir():
+            raise EuleraseError(f"{option} '{path}' is a folder; give a file name instead.")
+        if not folder.is_dir():
+            raise EuleraseError(
+                f"{option} '{path}' is in a folder that does not exist; create it first."
+            )
+        if not os.access(folder, os.W_OK):
+            raise EuleraseError(
+                f"{option} '{path}' is in a folder that cannot be written; choose another."
+            )
+
+
+@contextmanager
+def _writing(path: str) -> Iterator[None]:
+    """Report an OSError raised while writing `path` as one sentence."""
+    try:
+        yield
+    except OSError as err:
+        raise EuleraseError(f"cannot write {path}: {err.strerror or err}") from err
 
 
 def _print_results(args: argparse.Namespace, result: Analysis) -> None:
@@ -162,11 +216,15 @@ def _print_results(args: argparse.Namespace, result: Analysis) -> None:
 def _write_outputs(args: argparse.Namespace, result: Analysis) -> None:
     """Write each requested file in the order figure, csv, gfa, contigs, genbank."""
     if args.figure:
-        save_figure(result, args.figure)
+        with _writing(args.figure):
+            save_figure(result, args.figure)
         print(f"Wrote {args.figure}")
     if args.csv:
-        for table, path in io.csv_paths(args.csv).items():
-            io.write_text_file(path, io.csv_text(result, table.capitalize()))
+        paths = io.csv_paths(args.csv)
+        for table in TABLES:
+            path = paths[table.lower()]
+            with _writing(path):
+                io.write_text_file(path, io.csv_text(result, table))
             print(f"Wrote {path}")
     for path, writer in (
         (args.gfa, io.gfa_text),
@@ -174,7 +232,8 @@ def _write_outputs(args: argparse.Namespace, result: Analysis) -> None:
         (args.genbank, io.genbank_text),
     ):
         if path:
-            io.write_text_file(path, writer(result))
+            with _writing(path):
+                io.write_text_file(path, writer(result))
             print(f"Wrote {path}")
 
 
