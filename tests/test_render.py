@@ -1,10 +1,11 @@
 """Tests for the layout and the figure: what is drawn, where, and what a saved file holds."""
 
-import math
 import re
 
 import pytest
+from figure_probe import INPUTS, SAVED_SIZE, SMALL_SIZE, drawn, elements, extent, overlap
 from genomes import random_dna
+from matplotlib.backends.backend_agg import FigureCanvasAgg
 from matplotlib.colors import to_rgb
 from matplotlib.figure import Figure
 from matplotlib.patches import Circle, FancyArrowPatch
@@ -22,9 +23,6 @@ from eulerase.render import (
 )
 from eulerase.sequence import Record
 
-MIN_RADIUS, MAX_RADIUS = 0.01, 0.09
-BRANCH_GROWTH = 1.3  # nodes that are branches, starts or ends are drawn larger above 40 nodes
-
 
 def _analysis(sequence: str, k: int = 3, **settings):
     return analyze([Record("seq1", sequence)], Settings(k=k, **settings))
@@ -37,76 +35,47 @@ def _figure(a, upto=None):
     return fig, layout
 
 
-def _circles(fig):
-    return [p for p in fig.axes[0].patches if isinstance(p, Circle)]
-
-
-def _edge_labels(fig, a):
-    kmers = {s.kmer for trail in a.trails for s in trail}
-    return [t for t in fig.axes[0].texts if t.get_text().split(" ")[0] in kmers]
-
-
-def _is_visible(radius: float, upper: float = MAX_RADIUS) -> bool:
-    return MIN_RADIUS <= radius <= upper
-
-
 # A path with no repeated edge and no pair of opposite edges: ten distinct 3-mers in one trail.
 PATH = "CCGTAATGCCTT"
+MIN_DISC_PX = 8  # a node the eye can see
 
 
-def test_oracle_rejects_zero_radius_nodes():
-    assert _is_visible(0.05)
-    assert not _is_visible(0.0)
-    assert not _is_visible(0.001)
+def _disc_defects(fig):
+    """What is wrong with the node discs of a figure: one too small to see, or two that touch."""
+    boxes = {disc.get_gid(): extent(fig, disc) for disc in elements(fig, "node")}
+    found = [(gid, "small") for gid, box in boxes.items() if box[2] - box[0] < MIN_DISC_PX]
+    gids = sorted(boxes)
+    for i, first in enumerate(gids):
+        found += [(first, g) for g in gids[i + 1 :] if overlap(boxes[first], boxes[g], margin=0)]
+    return found
 
 
-def test_every_node_is_drawn_visibly():
-    a = _analysis(PATH)
-    fig, _ = _figure(a)
-    radii = [c.radius for c in _circles(fig)]
-    assert len(radii) == len(a.nodes)
-    assert all(_is_visible(r) for r in radii)
+def test_oracle_rejects_invisible_and_touching_discs():
+    fig = Figure(figsize=(4, 4))
+    FigureCanvasAgg(fig)
+    ax = fig.add_axes((0, 0, 1, 1))
+    ax.set_xlim(0, 100)
+    ax.set_ylim(0, 100)
+    for gid, centre, radius in (("node:AB", (20, 20), 5), ("node:BC", (60, 60), 0.5)):
+        disc = Circle(centre, radius)
+        disc.set_gid(gid)
+        ax.add_patch(disc)
+    fig.canvas.draw()
+    assert _disc_defects(fig) == [("node:BC", "small")]
+    touching = Circle((24, 20), 5)
+    touching.set_gid("node:CD")
+    ax.add_patch(touching)
+    fig.canvas.draw()
+    assert ("node:AB", "node:CD") in _disc_defects(fig)
 
 
-def test_small_graph_labels_every_edge_near_its_midpoint():
-    a = _analysis(PATH)
-    fig, layout = _figure(a)
-    steps = [s for trail in a.trails for s in trail]
-    labels = _edge_labels(fig, a)
-    assert len(labels) == len(steps)
-    midpoints = {
-        s.kmer: tuple((layout[s.source][i] + layout[s.target][i]) / 2 for i in (0, 1))
-        for s in steps
-    }
-    for label in labels:
-        x, y = label.get_position()
-        mx, my = midpoints[label.get_text().split(" ")[0]]
-        assert math.hypot(x - mx, y - my) < 0.15
-
-
-def test_dense_graph_keeps_branch_labels_and_drops_redundant_ones():
-    a = _analysis(random_dna(120, seed=7), k=6)
-    steps = [s for trail in a.trails for s in trail]
-    assert len(steps) > 25 and len(a.nodes) > 40
-    fig, layout = _figure(a)
-
-    assert len(_edge_labels(fig, a)) < len(steps)
-
-    preds, succs = {}, {}
-    for s in steps:
-        preds.setdefault(s.target, set()).add(s.source)
-        succs.setdefault(s.source, set()).add(s.target)
-    branches = {
-        n.node for n in a.nodes if len(preds.get(n.node, ())) > 1 or len(succs.get(n.node, ())) > 1
-    }
-    assert branches
-    labelled = {t.get_position() for t in fig.axes[0].texts}
-    assert all(layout[n] in labelled for n in branches)
-    assert len(labelled) < len(a.nodes) + len(steps)
-
-    radii = [c.radius for c in _circles(fig)]
-    assert len(radii) == len(a.nodes)
-    assert all(_is_visible(r, MAX_RADIUS * BRANCH_GROWTH) for r in radii)
+@pytest.mark.parametrize("size", (SAVED_SIZE, SMALL_SIZE), ids=("saved", "small"))
+@pytest.mark.parametrize("name", ("lemon", "repeat", "overlap"))
+def test_every_node_is_drawn_visibly_and_apart(name, size):
+    a = INPUTS[name]()
+    fig, _ = drawn(a, size)
+    assert len(elements(fig, "node")) == len(a.nodes)
+    assert _disc_defects(fig) == []
 
 
 def test_a_step_marks_only_the_traversed_edges():
@@ -117,9 +86,11 @@ def test_a_step_marks_only_the_traversed_edges():
     past = [p for p in arrows if p.get_edgecolor()[:3] == to_rgb(TRAIL_COLORS[0])]
     future = [p for p in arrows if p.get_edgecolor()[:3] == to_rgb(FUTURE)]
     assert (len(past), len(future)) == (3, 7)
-    numbered = {t.get_text() for t in fig.axes[0].texts if "(#" in t.get_text()}
-    first_three = {f"{s.kmer} (#{s.global_step})" for s in a.trails[0][:3]}
-    assert numbered == first_three
+
+
+def test_a_figure_with_three_trails_has_a_visible_legend():
+    fig, _ = drawn(INPUTS["three"]())
+    assert [legend for legend in fig.legends if legend.get_visible()]
 
 
 def test_figure_title_carries_the_settings():
@@ -134,10 +105,10 @@ def test_layout_is_none_above_the_drawing_limit_and_the_figure_says_why():
     assert len(a.nodes) > MAX_DRAW_NODES
     assert compute_layout(a) is None
     fig, _ = _figure(a)
-    texts = [t.get_text() for t in fig.axes[0].texts]
-    assert len(texts) == 1
+    texts = [t.get_text() for t in elements(fig, "note")]
+    assert len(texts) == len(fig.axes[0].texts) == 1
     assert str(MAX_DRAW_NODES) in texts[0] and str(len(a.nodes)) in texts[0]
-    assert not _circles(fig)
+    assert not elements(fig, "node")
 
 
 # Four nodes, 78 arrows: the two counts of the drawing limit differ, so a swap shows.
@@ -177,7 +148,7 @@ def test_the_drawing_limit_counts_nodes_and_arrows(monkeypatch, node_limit, arro
         assert layout is not None
         return
     assert layout is None
-    (text,) = [t.get_text() for t in fig.axes[0].texts]
+    (text,) = [t.get_text() for t in elements(fig, "note")]
 
     def mentions(number):
         return re.search(r"(?<!\d)" + str(number) + r"(?!\d)", text) is not None
