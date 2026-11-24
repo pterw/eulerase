@@ -1,10 +1,11 @@
 """What the window decides, without a toolkit: shapes, protocols and the pure functions."""
 
+import os
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Protocol
 
-from eulerase import analysis, kmers, sequence
+from eulerase import analysis, io, kmers, sequence
 from eulerase.analysis import Analysis, Settings
 from eulerase.errors import EuleraseError
 from eulerase.sequence import Record
@@ -23,6 +24,13 @@ SCREEN_ALLOWANCE = (0, 120)
 
 _TEXT_MEASURES = ("settings", "orf rule")
 _CONTIG_EXPORTS = ("fasta", "genbank", "gfa")
+# kind: (the dialog's suggested name, the writer of its text; None where the window draws it)
+_TEXT_EXPORTS = {
+    "figure": ("eulerase.png", None),
+    "fasta": ("contigs.fasta", io.fasta_text),
+    "genbank": ("contigs.gbk", io.genbank_text),
+    "gfa": ("assembly.gfa", io.gfa_text),
+}
 
 
 @dataclass(frozen=True)
@@ -256,6 +264,14 @@ def _settings(form: FormValues) -> Settings:
     return Settings(k=kmers.validate_k(_whole_number(form.k_text, "k")), **common)
 
 
+def _unwritable(error: OSError, after: str = "") -> str:
+    reason = error.strerror or "unwritable"
+    return (
+        f"The file {error.filename} could not be written ({reason}){after}; "
+        "check the folder and permissions."
+    )
+
+
 def _records(form: FormValues) -> list[Record]:
     parse = sequence.parse_kmer_list if form.input_mode == "kmers" else sequence.parse_records
     return parse(form.text)
@@ -370,11 +386,71 @@ class Presenter:
         self._view.show_step(self._total, self._total)
         self._view.show_busy(False)
         self._view.set_playing(False)
-        has_contigs = bool(outcome.analysis.contigs)
-        self._view.set_exports_enabled(
-            {kind: has_contigs or kind not in _CONTIG_EXPORTS for kind in EXPORT_KINDS}
-        )
+        self._view.set_exports_enabled({kind: self._enabled(kind) for kind in EXPORT_KINDS})
         self._view.show_status(result.status)
+
+    def open_file(self) -> None:
+        path = self._view.ask_open_path()
+        if path:
+            self.load_file(path)
+
+    def load_file(self, path: str) -> None:
+        try:
+            records = io.read_records(path)
+        except EuleraseError as error:  # the screen stays as it was
+            self._view.show_status(str(error), error=True)
+            return
+        loaded = replace(
+            self._view.read_form(), text=records_to_text(records), input_mode="sequences"
+        )
+        self.open_with(loaded)
+
+    def _enabled(self, kind: str) -> bool:
+        """Whether `kind` can be exported from the analysis shown: a build has succeeded."""
+        return kind not in _CONTIG_EXPORTS or bool(self._analysis.contigs)
+
+    def export(self, kind: str) -> None:
+        if self._phase != READY or not self._enabled(kind):
+            return
+        try:
+            message = self._export_csv() if kind == "csv" else self._export_one(kind)
+        except EuleraseError as error:
+            self._view.show_status(str(error), error=True)
+        except OSError as error:
+            self._view.show_status(_unwritable(error), error=True)
+        else:
+            if message:
+                self._view.show_status(message)
+
+    def _export_one(self, kind: str) -> str | None:
+        suggested, writer = _TEXT_EXPORTS[kind]
+        path = self._view.ask_save_path(kind, suggested)
+        if not path:
+            return None
+        if writer is None:
+            self._view.save_figure(self._analysis, path)
+        else:
+            io.write_text_file(path, writer(self._analysis))
+        return f"Saved {path}."
+
+    def _export_csv(self) -> str | None:
+        chosen = self._view.ask_save_path("csv", "eulerase.csv")
+        if not chosen:
+            return None
+        prefix = chosen[:-4] if chosen.lower().endswith(".csv") else chosen
+        paths = list(io.csv_paths(prefix).values())
+        existing = [path for path in paths if os.path.exists(path)]
+        if not self._view.confirm_export(paths, existing):
+            return None
+        written = 0
+        try:
+            for table, path in zip(analysis.TABLES, paths, strict=True):
+                io.write_text_file(path, io.csv_text(self._analysis, table))
+                written += 1
+        except OSError as error:
+            after = f", after {written} of {len(paths)} files were written"
+            raise EuleraseError(_unwritable(error, after)) from error
+        return f"Saved {len(paths)} files: {prefix}_*.csv."
 
     def _job(
         self, records: list[Record], settings: Settings, aspect: float, token: int
