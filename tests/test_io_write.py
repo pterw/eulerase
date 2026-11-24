@@ -137,6 +137,10 @@ def test_non_ascii_contig_is_refused_as_fasta_with_its_name():
     assert fasta_text(commas)
     with pytest.raises(EuleraseError, match="ctg1"):
         gfa_text(commas)
+    digits = _analysis(["AC1AC1AC1"], k=3)  # only digits outside A to Z
+    assert fasta_text(digits)
+    with pytest.raises(EuleraseError, match="ctg1"):
+        gfa_text(digits)
     assert "LEMON" in gfa_text(_analysis(["LEMONLEMONADE"], k=3))
 
 
@@ -172,6 +176,15 @@ _RULE = (
 )
 _TEN_FASTA = f">ctg1 len=4 cov=10.0000x gc=0.5000 orfs=0 {_SETTINGS} {_RULE}\nATGC\n"
 _REPEAT_FASTA = f">ctg1 len=6 cov=2.5000x gc=0.3333 orfs=0 {_SETTINGS} {_RULE}\nATGCAT\n"
+# GFA: the H line with the settings; one S line per contig with LN (length) and KC (the sum of
+# the multiplicities of the contig's k-mers); one L line per overlap of k - 1 = 2 letters.
+# Ten copies: LN 4, 2 distinct k-mers, KC 10 + 10 = 20, mean 10: all different; no link.
+# The repeat: LN 6, 4 distinct k-mers, KC 3 + 3 + 2 + 2 = 10, mean 2.5; the circular contig
+# ATGCAT ends in AT where it begins, so it links to itself.
+_TEN_GFA = f"H\tVN:Z:1.0\tst:Z:{_SETTINGS}\nS\tctg1\tATGC\tLN:i:4\tKC:i:20\n"
+_REPEAT_GFA = (
+    f"H\tVN:Z:1.0\tst:Z:{_SETTINGS}\nS\tctg1\tATGCAT\tLN:i:6\tKC:i:10\nL\tctg1\t+\tctg1\t+\t2M\n"
+)
 _TEN_GENBANK = "\n".join(
     [
         "LOCUS       ctg1                       4 bp    DNA     linear   UNK 01-JAN-1980",
@@ -279,17 +292,18 @@ _REPEAT_CSV = {
 
 
 @pytest.mark.parametrize(
-    ("case", "fasta", "genbank", "csv_texts"),
+    ("case", "fasta", "genbank", "gfa", "csv_texts"),
     [
-        (_ten_copies, _TEN_FASTA, _TEN_GENBANK, _TEN_CSV),
-        (_repeat, _REPEAT_FASTA, _REPEAT_GENBANK, _REPEAT_CSV),
+        (_ten_copies, _TEN_FASTA, _TEN_GENBANK, _TEN_GFA, _TEN_CSV),
+        (_repeat, _REPEAT_FASTA, _REPEAT_GENBANK, _REPEAT_GFA, _REPEAT_CSV),
     ],
     ids=["ten-copies", "repeat"],
 )
-def test_text_outputs_are_exact_for_the_worked_cases(case, fasta, genbank, csv_texts):
+def test_text_outputs_are_exact_for_the_worked_cases(case, fasta, genbank, gfa, csv_texts):
     a = case()
     assert _first_difference(fasta, fasta_text(a)) is None
     assert _first_difference(genbank, genbank_text(a)) is None
+    assert _first_difference(gfa, gfa_text(a)) is None
     assert list(csv_texts) == list(TABLES)
     assert list(csv_paths("out/x").items()) == [
         ("edges", "out/x_edges.csv"),
@@ -468,7 +482,6 @@ def test_oracle_rejects_a_wrong_gfa_link():
     assert _brute_links(strands, k, True) == [(1, "+", 1, "-"), (1, "+", 2, "+"), (2, "-", 2, "+")]
 
 
-@pytest.mark.xfail(strict=True, reason="A8: RC and DP tags")
 def test_gfa_segments_carry_ln_and_kc():
     reads = ["ATGCATGCATGC"]
     a = _analysis(reads, k=3)

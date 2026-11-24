@@ -168,8 +168,7 @@ def gfa_text(a: Analysis) -> str:
             )
     lines = [f"H\tVN:Z:1.0\tst:Z:{settings_text(a.settings)}"]
     for c in a.contigs:
-        depth = int(round(c.mean_multiplicity))
-        lines.append(f"S\tctg{c.id}\t{c.sequence}\tLN:i:{c.length}\tRC:i:{c.edges}\tDP:i:{depth}")
+        lines.append(f"S\tctg{c.id}\t{c.sequence}\tLN:i:{c.length}\tKC:i:{c.kmer_count}")
     overlap = a.k - 1
     for src, src_orient, dst, dst_orient in gfa_links(a.contigs, a.k, a.settings.both_strands):
         lines.append(f"L\tctg{src}\t{src_orient}\tctg{dst}\t{dst_orient}\t{overlap}M")
