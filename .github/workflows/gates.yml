@@ -1,5 +1,5 @@
 # A green run here means the same as a green local run of the three gates.
-# There is no CD: nothing is published in v0.1.
+# This workflow publishes nothing; release.yml releases after a green run of it on main.
 # Pull requests skip only documentation paths; pushes to main are never filtered.
 name: Gates
 
