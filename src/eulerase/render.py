@@ -2,7 +2,6 @@
 
 import math
 import os
-import random
 from collections import defaultdict
 from pathlib import Path
 
@@ -15,24 +14,30 @@ from eulerase.analysis import Analysis, settings_text
 from eulerase.errors import EuleraseError
 
 # ---------------------------------------------------------------------------
-# Palette (citrus) and limits
+# Palette (lemon on neutral surfaces) and limits
 # ---------------------------------------------------------------------------
-PITH = "#FFF8E1"  # background
-LEMON = "#F9D923"  # ordinary node
-RIND = "#E3B505"  # node outline
-LIME = "#6BA32B"  # trail start
-ORANGE = "#F28C28"  # trail end
-EDGE = "#8C6D1F"  # edges (single trail)
-INK = "#3B2F0B"  # text
-FUTURE = "#D6CBA0"  # not-yet-traversed edges
-FUTURE_TXT = "#B3A678"
-PANEL = "#FFF1BF"
-TRAIL_COLORS = ["#2F7D32", "#D9480F", "#C2255C", "#1C7ED6", "#9C36B5", "#8C6D1F"]
-BRANCH = "#B53A55"  # branch / junction node in dense graphs
+INK = "#1F1F1E"  # text and outlines
+MUTED = "#5F5E58"  # secondary text
+RULE = "#D9D8D2"  # hairlines and panel borders
+SURFACE = "#FCFCFB"  # the canvas and the tables
+WINDOW = "#F3F2EE"  # the window's background
+LEMON = "#F9D923"  # the primary action and the walk's current position, nothing else
+LEMON_SOFT = "#FDF0A6"  # the selected table row
+FIELD_BORDER = "#85837A"
+PRIMARY_BORDER = "#8C7400"
+ERROR = "#B3261E"
+FUTURE = "#949289"  # arrows not yet used
+TRAIL_COLORS = ("#2A78D6", "#EB6834", "#1BAF7A")
+# Trail t takes the colour TRAIL_COLORS[(t - 1) % 3] and the dash TRAIL_DASHES[((t - 1) // 3) % 3],
+# so no two of the first nine trails share both.
+TRAIL_DASHES = ("solid", "dashed", "dotted")
 
 # One drawing limit with two counts: above either, the graph is not drawn (tables still work).
 MAX_DRAW_NODES = 400
 MAX_DRAW_EDGES = 2000  # arrows: the walk graph's edges, self-loops and parallel edges included
+OVERVIEW_ABOVE_NODES = 60
+MAX_COPY_MARKS = 6
+FIGURE_ASPECT = 1.6  # width over height of the plot area of a saved figure
 FIGURE_FORMATS = ("png", "svg", "pdf")
 
 
@@ -56,95 +61,42 @@ def _counts_over_limit(g: nx.MultiDiGraph) -> list[str]:
     return over
 
 
-def _rotate_horizontal(pos: dict[str, tuple[float, float]]):
-    """Align the principal axis of the layout with the horizontal axis."""
-    pts = list(pos.values())
-    if len(pts) < 2:
-        return pos
-    mean_x = sum(x for x, y in pts) / len(pts)
-    mean_y = sum(y for x, y in pts) / len(pts)
-    sxx = sum((x - mean_x) ** 2 for x, y in pts)
-    syy = sum((y - mean_y) ** 2 for x, y in pts)
-    sxy = sum((x - mean_x) * (y - mean_y) for x, y in pts)
-    angle = 0.5 * math.atan2(2 * sxy, sxx - syy)
-    cos_a, sin_a = math.cos(-angle), math.sin(-angle)
-    return {
-        k: (
-            (x - mean_x) * cos_a - (y - mean_y) * sin_a,
-            (x - mean_x) * sin_a + (y - mean_y) * cos_a,
-        )
-        for k, (x, y) in pos.items()
-    }
+def compute_layout(
+    a: Analysis, aspect: float = FIGURE_ASPECT
+) -> dict[str, tuple[float, float]] | None:
+    """Reading-order layout: nodes in the order the walk first meets them, on a back-and-forth
+    grid (left to right on one row, right to left on the next) filling a plot area `aspect` wide
+    and 1 high.
 
-
-def _component_layout(sub: nx.MultiDiGraph) -> dict[str, tuple[float, float]]:
-    n = len(sub)
-    if n == 1:
-        return {next(iter(sub)): (0.0, 0.0)}
-    if n == 2:
-        nodes = list(sub)
-        return {nodes[0]: (-1.0, 0.0), nodes[1]: (1.0, 0.0)}
-    simple = nx.Graph(sub)
-    seed = random.Random(2026).randint(0, 10000)
-    pos = nx.spring_layout(
-        simple,
-        k=1.8 / math.sqrt(n),
-        iterations=160,
-        seed=seed,
-        scale=2.0,
-    )
-    pos = _rotate_horizontal(pos)
-    pts = list(pos.values())
-    min_x, max_x = min(x for x, y in pts), max(x for x, y in pts)
-    min_y, max_y = min(y for x, y in pts), max(y for x, y in pts)
-    rx, ry = max(max_x - min_x, 1e-6), max(max_y - min_y, 1e-6)
-    return {k: ((x - min_x) / rx, (y - min_y) / ry) for k, (x, y) in pos.items()}
-
-
-def _ordered_subgraph(g: nx.MultiDiGraph, nodes: list[str]) -> nx.MultiDiGraph:
-    """The subgraph on `nodes` (already sorted), built so its node and edge order is fixed."""
-    sub = nx.MultiDiGraph()
-    sub.add_nodes_from(nodes)
-    for u in nodes:
-        sub.add_edges_from(g.out_edges(u, keys=True, data=True))
-    return sub
-
-
-def compute_layout(a: Analysis) -> dict[str, tuple[float, float]] | None:
-    """Layout components in horizontal rows."""
-    g = _walk_graph(a)
-    if _counts_over_limit(g):
+    The order is: trails in order; in each, the source of its first step, then the target of
+    every step; a node already met is skipped. With n nodes, c columns and r = ceil(n / c) rows
+    the spacing is min(aspect / c, 1 / r); the grid has the c from 1 to n with the widest spacing,
+    the smaller c on a tie. Node i is in row i // c, in column i % c on an even row and
+    c - 1 - i % c on an odd one, at x = (column + 0.5) * aspect / c and y = 1 - (row + 0.5) / r.
+    There is no iteration and no random number, so the coordinates depend only on the input and
+    `aspect`. Returns None above the drawing limit and {} for no nodes; an `aspect` that is not
+    finite or is at or below 0 raises ValueError.
+    """
+    if not (math.isfinite(aspect) and aspect > 0):
+        raise ValueError(f"aspect must be a finite number above 0, not {aspect!r}")
+    if _counts_over_limit(_walk_graph(a)):
         return None
-    # A component is a set, so its iteration order follows string hashing: take every node and
-    # edge from the walk graph in sorted-node order, and order equal-size components by name.
-    ordered = sorted(
-        (sorted(c) for c in nx.weakly_connected_components(g)),
-        key=lambda nodes: (-len(nodes), nodes[0]),
-    )
-    comps = [_ordered_subgraph(g, nodes) for nodes in ordered]
-    if not comps:
+    order: dict[str, None] = {}
+    for trail in a.trails:
+        order.setdefault(trail[0].source)
+        for step in trail:
+            order.setdefault(step.target)
+    n = len(order)
+    if n == 0:
         return {}
-    layouts = [_component_layout(c) for c in comps]
-
-    row_w = 0.0
-    gap = 0.4
-    placements = []
-    for lyt in layouts:
-        pts = list(lyt.values())
-        w = max(x for x, y in pts) - min(x for x, y in pts) if len(pts) > 1 else 0.5
-        placements.append((row_w, 0.0, lyt))
-        row_w += max(w, 0.5) + gap
-
-    out = {}
-    for ox, oy, lyt in placements:
-        for k, (x, y) in lyt.items():
-            out[k] = (ox + x, oy + y)
-
-    xs, ys = [p[0] for p in out.values()], [p[1] for p in out.values()]
-    cx, cy = (min(xs) + max(xs)) / 2, (min(ys) + max(ys)) / 2
-    ext = max(max(xs) - min(xs), max(ys) - min(ys), 1e-9)
-    f = 2.0 / ext
-    return {k: ((px - cx) * f, (py - cy) * f) for k, (px, py) in out.items()}
+    c = max(range(1, n + 1), key=lambda cols: min(aspect / cols, 1 / math.ceil(n / cols)))
+    r = math.ceil(n / c)
+    layout = {}
+    for i, node in enumerate(order):
+        row, offset = divmod(i, c)
+        column = offset if row % 2 == 0 else c - 1 - offset
+        layout[node] = ((column + 0.5) * aspect / c, 1 - (row + 0.5) / r)
+    return layout
 
 
 def _loop_geometry(x, y, r, i):
@@ -169,7 +121,7 @@ def draw_figure(
     """Draw the walk graph with its Eulerian trail state on a matplotlib Figure."""
     fig.clear()
     ax = fig.add_subplot(111)
-    ax.set_facecolor(PITH)
+    ax.set_facecolor(SURFACE)
     ax.set_aspect("equal", adjustable="box")
     ax.axis("off")
 
@@ -248,7 +200,7 @@ def draw_figure(
                 past = g_step <= upto_step
                 active = (u, v, k_id) == cur_edge_key
                 color = (
-                    (TRAIL_COLORS[(ti - 1) % len(TRAIL_COLORS)] if multi_trail else EDGE)
+                    (TRAIL_COLORS[(ti - 1) % len(TRAIL_COLORS)] if multi_trail else TRAIL_COLORS[0])
                     if past
                     else FUTURE
                 )
@@ -273,11 +225,11 @@ def draw_figure(
                     ha="center",
                     va="bottom",
                     fontsize=edge_fs,
-                    color=INK if past else FUTURE_TXT,
+                    color=INK if past else MUTED,
                     weight="bold" if active else "normal",
                     zorder=5,
                     bbox=dict(
-                        boxstyle="round,pad=0.15", facecolor=PITH, edgecolor="none", alpha=0.85
+                        boxstyle="round,pad=0.15", facecolor=SURFACE, edgecolor="none", alpha=0.85
                     ),
                 )
             continue
@@ -290,7 +242,7 @@ def draw_figure(
             past = g_step <= upto_step
             active = (u, v, k_id) == cur_edge_key
             color = (
-                (TRAIL_COLORS[(ti - 1) % len(TRAIL_COLORS)] if multi_trail else EDGE)
+                (TRAIL_COLORS[(ti - 1) % len(TRAIL_COLORS)] if multi_trail else TRAIL_COLORS[0])
                 if past
                 else FUTURE
             )
@@ -337,11 +289,11 @@ def draw_figure(
                     ha="center",
                     va="center",
                     fontsize=edge_fs,
-                    color=INK if past else FUTURE_TXT,
+                    color=INK if past else MUTED,
                     weight="bold" if active else "normal",
                     zorder=5,
                     bbox=dict(
-                        boxstyle="round,pad=0.15", facecolor=PITH, edgecolor="none", alpha=0.85
+                        boxstyle="round,pad=0.15", facecolor=SURFACE, edgecolor="none", alpha=0.85
                     ),
                 )
 
@@ -356,18 +308,11 @@ def draw_figure(
         is_start = node in starts
         is_end = node in ends
         is_branch = node in branch_nodes
-        fill = (
-            LIME
-            if (is_start and not is_end)
-            else ORANGE
-            if (is_end and not is_start)
-            else (BRANCH if is_branch and n_nodes > 40 else LEMON)
-        )
         circ = Circle(
             (x, y),
             base_r * (1.3 if (is_start or is_end or is_branch) and n_nodes > 40 else 1.0),
-            facecolor=fill,
-            edgecolor=RIND,
+            facecolor=SURFACE,
+            edgecolor=INK,
             linewidth=1.2 if (is_start or is_end or is_branch) and n_nodes > 40 else 1.5,
             zorder=4,
         )
@@ -394,7 +339,7 @@ def draw_figure(
                 color=INK,
                 zorder=6,
                 bbox=dict(
-                    boxstyle="round,pad=0.15", facecolor=PITH, edgecolor=RIND, lw=0.6, alpha=0.9
+                    boxstyle="round,pad=0.15", facecolor=SURFACE, edgecolor=INK, lw=0.6, alpha=0.9
                 )
                 if n_nodes > 40
                 else None,
@@ -410,7 +355,9 @@ def draw_figure(
             c = TRAIL_COLORS[(i - 1) % len(TRAIL_COLORS)]
             elements.append(Line2D([0], [0], color=c, lw=2.2, label=f"trail {i} ({len(t)} edges)"))
     else:
-        elements.append(Line2D([0], [0], color=EDGE, lw=2.0, label="Eulerian path/circuit"))
+        elements.append(
+            Line2D([0], [0], color=TRAIL_COLORS[0], lw=2.0, label="Eulerian path/circuit")
+        )
     if any(node in starts for node in pos):
         elements.append(
             Line2D(
@@ -418,8 +365,8 @@ def draw_figure(
                 [0],
                 marker="o",
                 color="w",
-                markerfacecolor=LIME,
-                markeredgecolor=RIND,
+                markerfacecolor=SURFACE,
+                markeredgecolor=INK,
                 markersize=9,
                 label="start",
             )
@@ -431,8 +378,8 @@ def draw_figure(
                 [0],
                 marker="o",
                 color="w",
-                markerfacecolor=ORANGE,
-                markeredgecolor=RIND,
+                markerfacecolor=SURFACE,
+                markeredgecolor=INK,
                 markersize=9,
                 label="end",
             )
@@ -444,8 +391,8 @@ def draw_figure(
                 [0],
                 marker="o",
                 color="w",
-                markerfacecolor=BRANCH,
-                markeredgecolor=RIND,
+                markerfacecolor=SURFACE,
+                markeredgecolor=INK,
                 markersize=9,
                 label="branch / junction",
             )
@@ -457,8 +404,8 @@ def draw_figure(
         loc="upper left",
         bbox_to_anchor=(0.02, 0.98),
         frameon=True,
-        facecolor=PITH,
-        edgecolor=PANEL,
+        facecolor=SURFACE,
+        edgecolor=RULE,
         fontsize=8.5,
     )
     fig.suptitle(
@@ -478,7 +425,7 @@ def draw_figure(
             ha="center",
             va="bottom",
             fontsize=8,
-            color=FUTURE_TXT,
+            color=MUTED,
         )
 
 
@@ -492,5 +439,5 @@ def save_figure(a: Analysis, path: str | os.PathLike) -> None:
             + "."
         )
     fig = Figure(figsize=(10, 7))
-    draw_figure(fig, a, compute_layout(a))
+    draw_figure(fig, a, compute_layout(a, FIGURE_ASPECT))
     fig.savefig(path, format=extension)

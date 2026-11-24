@@ -13,9 +13,9 @@ from eulerase import render
 from eulerase.analysis import Settings, analyze, settings_text
 from eulerase.errors import EuleraseError
 from eulerase.render import (
-    EDGE,
     FUTURE,
     MAX_DRAW_NODES,
+    TRAIL_COLORS,
     compute_layout,
     draw_figure,
     save_figure,
@@ -114,7 +114,7 @@ def test_a_step_marks_only_the_traversed_edges():
     assert [len(t) for t in a.trails] == [10]
     fig, _ = _figure(a, upto=3)
     arrows = [p for p in fig.axes[0].patches if isinstance(p, FancyArrowPatch)]
-    past = [p for p in arrows if p.get_edgecolor()[:3] == to_rgb(EDGE)]
+    past = [p for p in arrows if p.get_edgecolor()[:3] == to_rgb(TRAIL_COLORS[0])]
     future = [p for p in arrows if p.get_edgecolor()[:3] == to_rgb(FUTURE)]
     assert (len(past), len(future)) == (3, 7)
     numbered = {t.get_text() for t in fig.axes[0].texts if "(#" in t.get_text()}
