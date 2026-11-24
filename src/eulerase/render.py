@@ -30,7 +30,9 @@ PANEL = "#FFF1BF"
 TRAIL_COLORS = ["#2F7D32", "#D9480F", "#C2255C", "#1C7ED6", "#9C36B5", "#8C6D1F"]
 BRANCH = "#B53A55"  # branch / junction node in dense graphs
 
-MAX_DRAW_NODES = 400  # above this the graph is not drawn (tables still work)
+# One drawing limit with two counts: above either, the graph is not drawn (tables still work).
+MAX_DRAW_NODES = 400
+MAX_DRAW_EDGES = 2000  # arrows: the walk graph's edges, self-loops and parallel edges included
 FIGURE_FORMATS = ("png", "svg", "pdf")
 
 
@@ -42,6 +44,16 @@ def _walk_graph(a: Analysis) -> nx.MultiDiGraph:
         for s in trail:
             g.add_edge(s.source, s.target, key=s.key, kmer=s.kmer)
     return g
+
+
+def _counts_over_limit(g: nx.MultiDiGraph) -> list[str]:
+    """Each count of the drawing limit that `g` is over, with its number and its limit."""
+    over = []
+    if len(g) > MAX_DRAW_NODES:
+        over.append(f"{len(g)} nodes, over the limit of {MAX_DRAW_NODES}")
+    if g.number_of_edges() > MAX_DRAW_EDGES:
+        over.append(f"{g.number_of_edges()} arrows, over the limit of {MAX_DRAW_EDGES}")
+    return over
 
 
 def _rotate_horizontal(pos: dict[str, tuple[float, float]]):
@@ -101,7 +113,7 @@ def _ordered_subgraph(g: nx.MultiDiGraph, nodes: list[str]) -> nx.MultiDiGraph:
 def compute_layout(a: Analysis) -> dict[str, tuple[float, float]] | None:
     """Layout components in horizontal rows."""
     g = _walk_graph(a)
-    if len(g) > MAX_DRAW_NODES:
+    if _counts_over_limit(g):
         return None
     # A component is a set, so its iteration order follows string hashing: take every node and
     # edge from the walk graph in sorted-node order, and order equal-size components by name.
@@ -167,8 +179,8 @@ def draw_figure(
         ax.text(
             0.5,
             0.5,
-            f"{a.headline}\n\n(Graph has {len(g)} nodes; "
-            f"drawing is disabled above {MAX_DRAW_NODES}.\n"
+            f"{a.headline}\n\n(The graph is not drawn: "
+            f"{' and '.join(_counts_over_limit(g))}.\n"
             "Use the tables below to inspect the Eulerian trails and assembly contigs.)",
             ha="center",
             va="center",

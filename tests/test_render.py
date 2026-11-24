@@ -1,6 +1,7 @@
 """Tests for the layout and the figure: what is drawn, where, and what a saved file holds."""
 
 import math
+import re
 
 import pytest
 from genomes import random_dna
@@ -8,6 +9,7 @@ from matplotlib.colors import to_rgb
 from matplotlib.figure import Figure
 from matplotlib.patches import Circle, FancyArrowPatch
 
+from eulerase import render
 from eulerase.analysis import Settings, analyze, settings_text
 from eulerase.errors import EuleraseError
 from eulerase.render import (
@@ -136,6 +138,55 @@ def test_layout_is_none_above_the_drawing_limit_and_the_figure_says_why():
     assert len(texts) == 1
     assert str(MAX_DRAW_NODES) in texts[0] and str(len(a.nodes)) in texts[0]
     assert not _circles(fig)
+
+
+# Four nodes, 78 arrows: the two counts of the drawing limit differ, so a swap shows.
+REPEATED = "ACGT" * 20
+
+
+def _drawing_counts(a):
+    """The two counts of the drawing limit, read from the analysis: nodes, arrows."""
+    return len(a.nodes), sum(len(t) for t in a.trails)
+
+
+def test_oracle_rejects_a_node_count_used_as_the_arrow_count():
+    assert _drawing_counts(_analysis(REPEATED)) == (4, 78)
+    assert _drawing_counts(_analysis(REPEATED))[0] != 78
+
+
+@pytest.mark.parametrize(
+    "node_limit, arrow_limit, over",
+    [
+        (3, 91, {"nodes": 3}),
+        (7, 50, {"arrows": 50}),
+        (3, 50, {"nodes": 3, "arrows": 50}),
+        (4, 78, {}),
+    ],
+    ids=["nodes only", "arrows only", "both", "exactly at both limits"],
+)
+def test_the_drawing_limit_counts_nodes_and_arrows(monkeypatch, node_limit, arrow_limit, over):
+    monkeypatch.setattr(render, "MAX_DRAW_NODES", node_limit)
+    monkeypatch.setattr(render, "MAX_DRAW_EDGES", arrow_limit)
+    a = _analysis(REPEATED)
+    nodes, arrows = _drawing_counts(a)
+    assert nodes != arrows
+    assert (nodes > node_limit, arrows > arrow_limit) == ("nodes" in over, "arrows" in over)
+
+    fig, layout = _figure(a)
+    if not over:
+        assert layout is not None
+        return
+    assert layout is None
+    (text,) = [t.get_text() for t in fig.axes[0].texts]
+
+    def mentions(number):
+        return re.search(r"(?<!\d)" + str(number) + r"(?!\d)", text) is not None
+
+    for name, count, limit in (("nodes", nodes, node_limit), ("arrows", arrows, arrow_limit)):
+        if name in over:
+            assert mentions(count) and mentions(limit)
+        else:
+            assert not mentions(limit)
 
 
 FORMAT_STARTS = {
