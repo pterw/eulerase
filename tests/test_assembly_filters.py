@@ -2,6 +2,7 @@
 
 import random
 from collections import Counter
+from fractions import Fraction
 
 import pytest
 from genomes import brute_kmers, random_dna, revcomp
@@ -167,14 +168,20 @@ def test_contigs_of_hand_worked_graphs(reads, k, expected):
 
 # --- tip clipping ---------------------------------------------------------------------------
 
-_A2 = pytest.mark.xfail(
-    strict=True, raises=AssertionError, reason="A2: tip clipping compares nothing"
-)
-
 _LONG = {  # two branches of 6 = 2k edges from the node AA at k=3; the first is seen once
     **{km: 1 for km in ("AAC", "ACG", "CGT", "GTC", "TCA", "CAT")},
     **{km: 5 for km in ("AAG", "AGG", "GGC", "GCC", "CCT", "CTT")},
 }
+# The same two branches with the letters of every k-mer reversed, so that they enter AA: the
+# weak one runs TA>AC>CT>TG>GC>CA>AA (TAC, ACT, CTG, TGC, GCA, CAA), the strong one the like.
+_LONG_IN = {km[::-1]: n for km, n in _LONG.items()}
+# The weak branch cut to 5 = 2k - 1 edges (the last k-mer CAT dropped), the strong one left at 6.
+_SHORT = {km: n for km, n in _LONG.items() if km != "CAT"}
+_SHORT_IN = {km[::-1]: n for km, n in _SHORT.items()}
+
+
+def _strong(counts):
+    return sorted(km for km, n in counts.items() if n == 5)
 
 
 @pytest.mark.parametrize(
@@ -188,19 +195,39 @@ _LONG = {  # two branches of 6 = 2k edges from the node AA at k=3; the first is 
             1,
             1,
             id="loses-only-AGT",
-            marks=_A2,
         ),
+        pytest.param({"AAC": 10, "AAG": 1}, ["AAC"], 1, 1, id="seen-10-times-beats-seen-once"),
+        pytest.param({"AAC": 2, "AAG": 2}, ["AAC", "AAG"], 0, 0, id="equal-branches-both-kept"),
+        # Leaving AA: AAC and AAG (once each) tie, AAT (5) is strictly better than both: both go.
         pytest.param(
-            {"AAC": 10, "AAG": 1}, ["AAC"], 1, 1, id="seen-10-times-beats-seen-once", marks=_A2
+            {"AAC": 1, "AAG": 1, "AAT": 5}, ["AAT"], 2, 2, id="two-equal-branches-beside-a-better"
         ),
+        # Leaving AA: AAC>ACG (2 edges, seen 2 + 2 = 4 times, mean 2) against AAT (1 edge, seen
+        # 3 times, mean 3). AAT has the smaller total and the higher mean: the two-edge branch goes.
         pytest.param(
-            {"AAC": 2, "AAG": 2}, ["AAC", "AAG"], 0, 0, id="equal-branches-both-kept", marks=_A2
+            {"AAC": 2, "ACG": 2, "AAT": 3}, ["AAT"], 1, 2, id="the-mean-decides-not-the-total"
         ),
-        pytest.param(_LONG, sorted(_LONG), 0, 0, id="branch-of-2k-edges-is-kept"),
+        pytest.param(_LONG, sorted(_LONG), 0, 0, id="branch-of-2k-edges-is-kept-leaving"),
+        pytest.param(_LONG_IN, sorted(_LONG_IN), 0, 0, id="branch-of-2k-edges-is-kept-entering"),
+        # 5 = 2k - 1 edges is short enough: the weak branch goes, the 6 strong edges stay.
+        pytest.param(_SHORT, _strong(_SHORT), 1, 5, id="branch-of-2k-minus-1-edges-goes-leaving"),
+        pytest.param(
+            _SHORT_IN, _strong(_SHORT_IN), 1, 5, id="branch-of-2k-minus-1-edges-goes-entering"
+        ),
         # ACAAAATA at k=3: ACA, CAA, AAA twice, AAT, ATA. The self-loop AAA (mean 2) beats both
         # the tail AAT, ATA (mean 1) and the head ACA, CAA (mean 1): four k-mers, two branches.
         pytest.param(
             {"ACA": 1, "CAA": 1, "AAA": 2, "AAT": 1, "ATA": 1}, ["AAA"], 2, 4, id="self-loop-wins"
+        ),
+        # AAC runs AA>AC. AA has no edge in and two out; AC has two in and none out; TA has none
+        # in. Leaving AA the chain AAC is a dead end with AAG (5) beside it; entering AC it is
+        # a dead end with TAC (5) beside it. One chain, so one branch and one k-mer.
+        pytest.param(
+            {"AAC": 1, "AAG": 5, "TAC": 5},
+            ["AAG", "TAC"],
+            1,
+            1,
+            id="a-chain-dead-at-both-ends-is-one-branch",
         ),
     ],
 )
@@ -209,17 +236,110 @@ def test_tip_clipping_follows_the_rule(counts, survivors, branches, kmers):
     assert (_graph_kmers(clipped), n_branches, n_kmers) == (survivors, branches, kmers)
 
 
-@_A2
-def test_tip_clipping_gives_the_same_contigs_whatever_order_the_reads_came_in():
-    # The mapping is built in read order, so the graph's node order differs between the two.
-    # Each way leaves one contig, so the contig numbering is not in question.
-    a, b = ["TACGT"] * 4, ["TACGA"]
-    outcomes = []
-    for reads in (a + b, b + a):
-        counts = dict(Counter(brute_kmers(reads, 3, False)))
-        clipped, _, _ = clip_tips(build_assembly_graph(counts), 3)
-        outcomes.append(extract_contigs(clipped, 3, both_strands=False))
-    assert outcomes[0] == outcomes[1]
+def _random_counts(seed: int) -> tuple[dict[str, int], int]:
+    """k-mer counts of 1 to 4 random reads over A and C, each read repeated 1 to 3 times."""
+    rng = random.Random(seed)
+    k = rng.randint(3, 5)
+    reads = []
+    for _ in range(rng.randint(1, 4)):
+        read = "".join(rng.choice("AC") for _ in range(rng.randint(k, k + 10)))
+        reads += [read] * rng.randint(1, 3)
+    return dict(count_kmers(brute_kmers(reads, k, False))), k
+
+
+def _judge(counts: dict[str, int], k: int, *, by_mean: bool = True) -> dict:
+    """The rule's sentences applied literally to the k-mer counts, with no graph library.
+
+    A branch is a chain of k-mers from a first node. It leaves the node (its first k-mer
+    starts there) or enters it (its last k-mer ends there), and runs through nodes with one
+    k-mer in and one out up to the next node that is not like that. A chain is identified by
+    its ordered k-mers, so one judged from both of its ends is one branch. Returns the removed
+    chains, the chains that are a short dead end from both ends, and how many short dead ends
+    have an equal rival and were kept. `by_mean=False` is a wrong judge for which any other
+    branch on the same side counts as better."""
+    into: dict[str, list[str]] = {}
+    out_of: dict[str, list[str]] = {}
+    for km in counts:
+        out_of.setdefault(km[:-1], []).append(km)
+        into.setdefault(km[1:], []).append(km)
+
+    def grow(first: str, leaving: bool) -> tuple[str, ...]:
+        chain = [first]
+        while True:
+            node = chain[-1][1:] if leaving else chain[0][:-1]
+            if len(into.get(node, [])) != 1 or len(out_of.get(node, [])) != 1:
+                return tuple(chain)
+            step = out_of[node][0] if leaving else into[node][0]
+            if step in chain:  # a lone cycle
+                return tuple(chain)
+            chain = [*chain, step] if leaving else [step, *chain]
+
+    branches = []  # (first node, leaving?, chain, mean, a short dead end?)
+    for node in sorted(set(into) | set(out_of)):
+        for leaving in (True, False):
+            for first in (out_of if leaving else into).get(node, []):
+                chain = grow(first, leaving)
+                far = chain[-1][1:] if leaving else chain[0][:-1]
+                dead = not (out_of if leaving else into).get(far, [])
+                mean = Fraction(sum(counts[km] for km in chain), len(chain))
+                branches.append((node, leaving, chain, mean, dead and len(chain) < 2 * k))
+
+    def rivals(b):
+        return [o for o in branches if o is not b and o[:2] == b[:2]]
+
+    def goes(b) -> bool:
+        return b[4] and any((o[3] > b[3]) if by_mean else True for o in rivals(b))
+
+    short_dead = [b[2] for b in branches if b[4]]
+    return {
+        "removed": {b[2] for b in branches if goes(b)},
+        "both_ends": {c for c in set(short_dead) if short_dead.count(c) == 2},
+        "tied_and_kept": sum(
+            1 for b in branches if b[4] and not goes(b) and any(o[3] == b[3] for o in rivals(b))
+        ),
+    }
+
+
+def test_tip_clipping_matches_a_brute_force_judge():
+    saw_clipped = saw_tie_kept = saw_both_ends = saw_counts_differ = False
+    for seed in range(400):
+        counts, k = _random_counts(seed)
+        verdict = _judge(counts, k)
+        clipped, n_branches, n_kmers = clip_tips(build_assembly_graph(counts), k)
+        removed = {km for chain in verdict["removed"] for km in chain}
+        assert _graph_kmers(clipped) == sorted(set(counts) - removed), (seed, counts, k)
+        assert (n_branches, n_kmers) == (len(verdict["removed"]), len(removed)), (seed, counts)
+        saw_clipped |= bool(removed)
+        saw_tie_kept |= verdict["tied_and_kept"] > 0
+        saw_both_ends |= bool(verdict["both_ends"])
+        saw_counts_differ |= n_branches != n_kmers  # else branches and k-mers could be swapped
+    assert (saw_clipped, saw_tie_kept, saw_both_ends, saw_counts_differ) == (True,) * 4
+
+
+def test_oracle_rejects_a_judge_that_ignores_multiplicity():
+    # AAC seen 10 times, AAG once, both dead ends of AA: only AAG is worse, so only AAG goes.
+    counts = {"AAC": 10, "AAG": 1}
+    assert counts["AAC"] != counts["AAG"]  # the rivals must differ or the two judges agree
+    assert _judge(counts, 3)["removed"] == {("AAG",)}
+    assert _judge(counts, 3, by_mean=False)["removed"] == {("AAC",), ("AAG",)}
+
+
+def test_clipping_is_independent_of_read_order():
+    # The graph's node and edge order follows the order of the mapping, so shuffling it
+    # changes the order in which the clipper meets every node.
+    saw_clipped = False
+    for seed in range(60):
+        counts, k = _random_counts(seed)
+        items = list(counts.items())
+        outcomes = []
+        for shuffle_seed in range(4):
+            random.Random(shuffle_seed).shuffle(items)
+            clipped, branches, kmers = clip_tips(build_assembly_graph(dict(items)), k)
+            contigs = extract_contigs(clipped, k, both_strands=False)
+            outcomes.append((_graph_kmers(clipped), branches, kmers, contigs))
+        assert all(o == outcomes[0] for o in outcomes), (seed, counts)
+        saw_clipped |= outcomes[0][1] > 0
+    assert saw_clipped
 
 
 # --- GFA links ------------------------------------------------------------------------------

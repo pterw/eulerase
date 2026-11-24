@@ -4,6 +4,7 @@ import statistics
 from collections import Counter
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, replace
+from fractions import Fraction
 
 import networkx as nx
 
@@ -57,73 +58,51 @@ def filter_min_multiplicity(ag: nx.DiGraph, minimum: int) -> tuple[nx.DiGraph, i
     return out, len(rare)
 
 
-def _remove_tips(ag: nx.DiGraph, k: int) -> int:
-    """Remove, in place, dead-end paths shorter than ``2 * k`` nodes that end beside a
-    branch. Returns the number of paths removed.
-
-    Known limitation: the test is on path length only and compares no multiplicity, so a
-    genuine end of the input next to a branch or repeat can be clipped. Each pass rescans
-    all nodes, which is quadratic in the worst case."""
-    max_tip_len = 2 * k
-    removed = 0
-    changed = True
-    while changed:
-        changed = False
-        for node in list(ag.nodes()):
-            if node not in ag:
-                continue
-            # Forward tip: dead end (out_degree == 0)
-            if ag.out_degree(node) == 0 and ag.in_degree(node) >= 1:
-                path = [node]
-                cur = node
-                is_tip = False
-                for _ in range(max_tip_len):
-                    preds = list(ag.predecessors(cur))
-                    if len(preds) != 1:
-                        break
-                    pred = preds[0]
-                    if ag.out_degree(pred) > 1:
-                        is_tip = True
-                        break
-                    path.append(pred)
-                    cur = pred
-                if is_tip and len(path) < max_tip_len:
-                    for n in path:
-                        ag.remove_node(n)
-                    removed += 1
-                    changed = True
-                    continue
-            # Backward tip: source (in_degree == 0)
-            if node not in ag:
-                continue
-            if ag.in_degree(node) == 0 and ag.out_degree(node) >= 1:
-                path = [node]
-                cur = node
-                is_tip = False
-                for _ in range(max_tip_len):
-                    succs = list(ag.successors(cur))
-                    if len(succs) != 1:
-                        break
-                    succ = succs[0]
-                    if ag.in_degree(succ) > 1:
-                        is_tip = True
-                        break
-                    path.append(succ)
-                    cur = succ
-                if is_tip and len(path) < max_tip_len:
-                    for n in path:
-                        ag.remove_node(n)
-                    removed += 1
-                    changed = True
-    return removed
+def _chain(ag: nx.DiGraph, node: str, other: str, leaving: bool) -> tuple[tuple[str, str], ...]:
+    """The branch that leaves *node* by the edge to *other* (or enters it by the edge from
+    *other*): its edges in path order, ending at the first node that is not one edge in and
+    one edge out."""
+    step = ag.successors if leaving else ag.predecessors
+    edges = []
+    while True:
+        edges.append((node, other) if leaving else (other, node))
+        if ag.in_degree(other) != 1 or ag.out_degree(other) != 1:
+            return tuple(edges if leaving else reversed(edges))
+        node, other = other, next(iter(step(other)))
 
 
 def clip_tips(ag: nx.DiGraph, k: int) -> tuple[nx.DiGraph, int, int]:
-    """A copy with short dead-end branches clipped, the number of branches removed and the
-    number of distinct k-mers (edges) the graph lost."""
+    """A copy without the dead-end branches that a stronger branch outweighs, the number of
+    branches removed and the number of distinct k-mers (edges) that took.
+
+    A branch is the chain of edges from a node to the next node that is not one edge in and
+    one edge out. One that leaves its first node and ends where no edge leaves, or enters it
+    and starts where no edge enters, is a dead end. It goes when it has fewer than ``2 * k``
+    edges and another branch on the same side of the same first node has a strictly higher
+    mean multiplicity. A chain is one branch however many of its ends make it a dead end.
+    Every branch is judged on the graph as it comes in, and those that qualify go together."""
+    doomed: set[tuple[tuple[str, str], ...]] = set()
+    for node in ag:
+        for leaving, degree, ends in (
+            (True, ag.out_degree(node), ag.out_degree),
+            (False, ag.in_degree(node), ag.in_degree),
+        ):
+            if degree < 2:
+                continue
+            others = ag.successors(node) if leaving else ag.predecessors(node)
+            chains = [_chain(ag, node, other, leaving) for other in others]
+            means = [
+                Fraction(sum(ag.edges[e]["multiplicity"] for e in c), len(c)) for c in chains
+            ]
+            best = max(means)
+            for chain, mean in zip(chains, means, strict=True):
+                far = chain[-1][1] if leaving else chain[0][0]
+                if len(chain) < 2 * k and mean < best and ends(far) == 0:
+                    doomed.add(chain)
     out = ag.copy()
-    branches = _remove_tips(out, k)
-    return out, branches, ag.number_of_edges() - out.number_of_edges()
+    out.remove_edges_from(e for chain in doomed for e in chain)
+    out.remove_nodes_from(list(nx.isolates(out)))
+    return out, len(doomed), sum(len(c) for c in doomed)
 
 
 def _least_rotation(s: str) -> str:
