@@ -20,14 +20,17 @@ from eulerase.orfs import Orf, orf_rule_text
 from eulerase.sequence import Record, parse_records
 
 _GZIP_MAGIC = b"\x1f\x8b"
+_UTF16_MARKS = (b"\xff\xfe", b"\xfe\xff")
 _BOM = "\ufeff"
 _FIRST_LINE_FORMATS = (("LOCUS", "genbank"), ("ID ", "embl"), (">", "fasta"), ("@", "fastq"))
 
 
 def _text_of(data: bytes) -> str:
-    """Decode, drop the byte-order mark, read `\\r\\n` and a lone `\\r` as `\\n`, then drop any
-    leading blank lines (once, for all users)."""
-    text = data.decode("utf-8", errors="replace").removeprefix(_BOM)
+    """Decode (UTF-16 when the bytes start with its byte-order mark, else UTF-8), drop the
+    byte-order mark, read `\\r\\n` and a lone `\\r` as `\\n`, then drop any leading blank lines
+    (once, for all users)."""
+    encoding = "utf-16" if data.startswith(_UTF16_MARKS) else "utf-8"
+    text = data.decode(encoding, errors="replace").removeprefix(_BOM)
     text = text.replace("\r\n", "\n").replace("\r", "\n")
     return re.sub(r"\A(?:[^\S\n]*\n)+", "", text)
 

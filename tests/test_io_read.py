@@ -1,5 +1,6 @@
 """Reading sequence files: every format, plain or gzip, loads every record."""
 
+import codecs
 import gzip
 import io
 
@@ -87,6 +88,9 @@ def test_biopython_failure_becomes_one_sentence(tmp_path):
 
 _FA = ">r1\nACGTACGTAC\n>r2\nGGGTTTAAAC\n"
 _FA_SEQS = ["ACGTACGTAC", "GGGTTTAAAC"]
+_UTF16_LE = codecs.BOM_UTF16_LE + _FA.encode("utf-16-le")
+_UTF16_BE = codecs.BOM_UTF16_BE + _FA.encode("utf-16-be")
+assert _UTF16_LE != _UTF16_BE
 
 
 @pytest.mark.parametrize(
@@ -113,6 +117,10 @@ _FA_SEQS = ["ACGTACGTAC", "GGGTTTAAAC"]
         pytest.param("a.fa", b"hello, world 42\n", None, id="unrecognised"),
         pytest.param("reads.txt", gzip.compress(_FA.encode()), _FA_SEQS, id="gz-txt"),
         pytest.param("reads.gz", _FA.encode(), _FA_SEQS, id="plain-gz"),
+        pytest.param("a.fa", _UTF16_LE, _FA_SEQS, id="utf16-le"),
+        pytest.param("a.fa", _UTF16_BE, _FA_SEQS, id="utf16-be"),
+        pytest.param("a.fa", gzip.compress(_UTF16_LE), _FA_SEQS, id="utf16-le-gz"),
+        pytest.param("a.fa", _UTF16_LE + b"\x00", None, id="utf16-odd-length"),
     ],
 )
 def test_format_is_detected_from_content(tmp_path, name, data, expected):
