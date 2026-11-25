@@ -43,7 +43,8 @@ def test_oracle_rejects_a_wrong_reverse_complement():
         ("\n\n>a\n\nAC\n\n\nGT\n\n", [Record("a", "ACGT")]),
         ("acgt\n\nTTGG\r\n", [Record("seq1", "ACGT"), Record("seq2", "TTGG")]),
         ("AC GT\n", [Record("seq1", "ACGT")]),
-        (">only a header\n", []),
+        (">only a header\n", [Record("only a header", "")]),  # was [] before this was inverted
+        (">a\n>b\nAC\n", [Record("a", ""), Record("b", "AC")]),
         ("", []),
     ],
 )

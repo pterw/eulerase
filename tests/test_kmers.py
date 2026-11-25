@@ -8,7 +8,7 @@ from genomes import brute_kmers, random_dna
 
 from eulerase import kmers
 from eulerase.errors import EuleraseError
-from eulerase.sequence import Record
+from eulerase.sequence import Record, parse_records
 
 
 def _records(*sequences: str) -> list[Record]:
@@ -60,6 +60,9 @@ def test_every_record_empty_is_refused_with_its_own_sentence():
         kmers.from_sequences(_records("", ""), 3, both_strands=False, unique=False)
     assert "empty" in str(empty.value)
     assert "smaller k" not in str(empty.value)
+    # a header with nothing under it is an empty record too, not "no sequence"
+    with pytest.raises(EuleraseError, match="Every record is empty"):
+        kmers.from_sequences(parse_records(">only a header\n"), 3, both_strands=False, unique=False)
     beside_long = kmers.from_sequences(_records("", "ACGTAC"), 3, both_strands=False, unique=False)
     assert beside_long.short_records == 1
     assert list(beside_long.items) == brute_kmers(["ACGTAC"], 3, False)

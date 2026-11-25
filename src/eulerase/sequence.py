@@ -34,7 +34,7 @@ def parse_records(text: str) -> list[Record]:
                 if not blocks:
                     blocks.append(("", []))
                 blocks[-1][1].append(ln)
-        found = [(name, "".join(parts)) for name, parts in blocks if parts]
+        found = [(name, "".join(parts)) for name, parts in blocks]
     else:
         found = [("", ln) for ln in lines if ln]
     return [
