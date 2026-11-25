@@ -38,8 +38,20 @@ CI runs the same three gates on Windows and Linux for every push to `main` and f
 request that changes anything but documentation. The documentation paths are the four in the
 workflow's `paths-ignore` (Markdown under `docs/`, `CONTRIBUTING.md`, the issue templates and the
 pull request template); they hold no code, test, tool, `pyproject.toml`, `README.md`, `LICENSE`,
-`AGENTS.md` or workflow. A documentation-only pull request therefore shows no CI run. Nothing is
-published, so there is no release process yet.
+`AGENTS.md` or workflow. A documentation-only pull request therefore shows no CI run.
+
+## Releases
+
+The version lives in `pyproject.toml` and in `src/eulerase/__init__.py`, and a test holds the two
+equal. A release is a pull request that changes the version and adds its entry to
+[the changelog](CHANGELOG.md).
+
+After the pull request is merged and the gates are green on `main`, the release workflow tags the
+commit those gates tested `v<version>` and attaches the source distribution and the wheel to a
+GitHub release of that name. A merge that does not change the version releases nothing. After a
+release pull request is merged, wait for its run to finish before merging anything else.
+
+Nothing is uploaded to a package index, and no one tags by hand.
 
 ## Commits
 
