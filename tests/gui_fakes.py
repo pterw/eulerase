@@ -4,7 +4,10 @@ Imported flat, as `genomes.py` is. Nothing here touches a toolkit.
 """
 
 import inspect
+import os
+import time
 from collections.abc import Callable, Mapping, Sequence
+from pathlib import Path
 
 from eulerase.analysis import Analysis
 from eulerase.gui.presenter import BuildOutcome, FormValues, ResultView
@@ -135,6 +138,46 @@ class FakeWorker:
 
     def finish(self, i: int, presenter) -> None:
         presenter.on_build_outcome(self.run_without_delivering(i))
+
+
+def small_job(token: int, text: str) -> BuildOutcome:
+    """A finished build for the real-process tests; `text` rides in `error` so it can be compared.
+    Module-level, because a spawned child imports it by name."""
+    return BuildOutcome(token, None, None, text)
+
+
+def sized_job(token: int, text: str) -> BuildOutcome:
+    """Takes an argument of any size and answers with its length, so the outcome stays small."""
+    return BuildOutcome(token, None, None, str(len(text)))
+
+
+def sleeping_job(token: int, marker: str, seconds: float) -> BuildOutcome:
+    """Writes `marker` when it starts, then sleeps: a build still running."""
+    Path(marker).write_text("started")
+    time.sleep(seconds)
+    return BuildOutcome(token, None, None, "slept")
+
+
+def vanishing_job(token: int) -> BuildOutcome:
+    """Ends its process at once, with no outcome."""
+    os._exit(3)
+
+
+def fail_to_rebuild():
+    raise ValueError("this object cannot be rebuilt")
+
+
+class Unreadable:
+    """Pickles in the child; unpickling it in the parent raises an error that is not a lost
+    pipe."""
+
+    def __reduce__(self):
+        return (fail_to_rebuild, ())
+
+
+def unreadable_job(token: int) -> Unreadable:
+    """Finishes, but what it sends cannot be read back."""
+    return Unreadable()
 
 
 def protocol_gaps(cls: type, protocol: type) -> list[str]:

@@ -4,6 +4,7 @@ Nothing here runs at import: no widget, no root, no thread. A `Window` is built 
 reaches its presenter only through `bind`, so no callback is wired before then.
 """
 
+import multiprocessing
 import queue
 import threading
 import tkinter
@@ -12,6 +13,7 @@ import tkinter.font
 import tkinter.messagebox
 import tkinter.ttk as ttk
 from dataclasses import dataclass
+from multiprocessing.connection import Connection
 from pathlib import Path
 
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolbar2Tk
@@ -29,6 +31,7 @@ from eulerase.gui.presenter import (
     ResultView,
     TableView,
     fit_window,
+    run_in_process,
 )
 
 MODES = (("sequences", "Sequences or FASTA"), ("kmers", "K-mer list"))
@@ -60,6 +63,8 @@ MIN_CANVAS_PX = 2  # a canvas not yet mapped reports 1
 RESIZE_DELAY_MS = 150  # a drag of the window edge lays out once, after it stops
 ZOOM_IN, ZOOM_OUT = 0.85, 1.18  # one wheel notch, as a factor of the visible range
 POLL_MS = 100  # how often the window looks for a finished build
+PROCESS_JOIN_SECONDS = 1  # the longest the window's thread waits for an ended process to go
+PROCESS_LOST = "The build ended without a result; try again, or build a smaller input."
 
 
 @dataclass(frozen=True)
@@ -777,15 +782,57 @@ class Window:
         self.canvas.draw_idle()
 
 
+def _send_arguments(connection: Connection, args: tuple) -> None:
+    """Hand a child its arguments. If it was ended meanwhile, or they cannot be sent, the
+    child sees end of file or nothing at all, and the window's poll reports no result."""
+    try:
+        connection.send(args)
+    except Exception:  # noqa: S110 - nobody is waiting for this thread; the poll reports it
+        pass
+    finally:
+        connection.close()
+
+
 class ThreadWorker:
-    """Runs a build off the window's thread. Outcomes wait in a queue that `poll` empties on the
-    window's thread; the worker touches no widget."""
+    """Runs a build off the window's thread, and in a process. Outcomes of both ways wait for
+    `poll`, which the window's thread calls; the worker touches no widget."""
 
     def __init__(self):
         self._outcomes: queue.SimpleQueue[BuildOutcome] = queue.SimpleQueue()
+        self._process: tuple[multiprocessing.Process, Connection, int] | None = None
 
     def start(self, job) -> None:
         threading.Thread(target=lambda: self._outcomes.put(job()), daemon=True).start()
+
+    def start_process(self, token: int, function, args: tuple) -> None:
+        """Run `function(token, *args)` in a fresh interpreter (`spawn`: never `fork` beside Tk).
+        The child is a daemon, so an exit that skips `end_process` does not wait for it. One
+        process at a time: a running one is ended first, so none is left without an owner.
+        The arguments go over a pipe of their own from a daemon thread: starting a process
+        writes everything it is given into a pipe that holds a few KB, so a large argument
+        would make this call wait for the child's start-up, on the window's thread."""
+        self.end_process()
+        context = multiprocessing.get_context("spawn")
+        receiver, sender = context.Pipe(duplex=False)
+        job_in, job_out = context.Pipe(duplex=False)
+        process = context.Process(
+            target=run_in_process, args=(sender, job_in, function, token), daemon=True
+        )
+        process.start()
+        sender.close()  # only the child holds the sending end, so its exit reads as end of file
+        job_in.close()  # likewise: an ended child makes the sending thread's write fail
+        threading.Thread(target=_send_arguments, args=(job_out, args), daemon=True).start()
+        self._process = (process, receiver, token)
+
+    def end_process(self) -> None:
+        """End the running process at once; nothing of it is delivered afterwards."""
+        if self._process is None:
+            return
+        process, receiver, _ = self._process
+        self._process = None
+        process.terminate()
+        process.join(PROCESS_JOIN_SECONDS)
+        receiver.close()
 
     def poll(self) -> list[BuildOutcome]:
         found = []
@@ -793,7 +840,27 @@ class ThreadWorker:
             try:
                 found.append(self._outcomes.get_nowait())
             except queue.Empty:
-                return found
+                break
+        found.extend(self._poll_process())
+        return found
+
+    def _poll_process(self) -> list[BuildOutcome]:
+        if self._process is None:
+            return []
+        _, receiver, token = self._process
+        try:
+            # Data, or the end of file once the child has gone: an outcome it sent before it
+            # exited is read here before any failure is reported.
+            if not receiver.poll():
+                return []
+            outcome = receiver.recv()
+        except Exception:  # end of file, or a message that cannot be read: either way, no result
+            outcome = BuildOutcome(token, None, None, PROCESS_LOST)
+        # No wait for the child: it is still tearing down what it sent, and the window's thread
+        # would stall on it; the daemon is reaped later.
+        self._process = None
+        receiver.close()
+        return [outcome]
 
 
 class TkScheduler:

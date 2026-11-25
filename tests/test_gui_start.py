@@ -1,6 +1,7 @@
 """The worker thread, the scheduler and the start function, checked without a window."""
 
 import inspect
+import multiprocessing
 import threading
 import time
 
@@ -13,7 +14,17 @@ assert getattr(tkinter.Tk, "eulerase_window_guard", False) and getattr(
     tkinter.Toplevel, "eulerase_window_guard", False
 ), "guard not installed"
 
-from gui_fakes import FakeScheduler, FakeView, protocol_gaps  # noqa: E402
+from genomes import child_env  # noqa: E402
+from gui_fakes import (  # noqa: E402
+    FakeScheduler,
+    FakeView,
+    protocol_gaps,
+    sized_job,
+    sleeping_job,
+    small_job,
+    unreadable_job,
+    vanishing_job,
+)
 
 from eulerase.errors import EuleraseError  # noqa: E402
 from eulerase.gui import app  # noqa: E402
@@ -27,6 +38,8 @@ from eulerase.gui.presenter import (  # noqa: E402
 )
 
 WAIT_SECONDS = 5
+PROCESS_WAIT_SECONDS = 30  # a spawned child starts a fresh interpreter and imports gui_fakes
+SLEEP_SECONDS = 3
 
 
 def command_problems(commands) -> list[str]:
@@ -65,9 +78,9 @@ def test_oracle_rejects_a_command_with_no_method():
     assert len(command_problems([missing, too_many])) == 2
 
 
-def wait_for_outcomes(worker, count: int = 1) -> list:
+def wait_for_outcomes(worker, count: int = 1, seconds: float = WAIT_SECONDS) -> list:
     found = []
-    deadline = time.monotonic() + WAIT_SECONDS
+    deadline = time.monotonic() + seconds
     while len(found) < count and time.monotonic() < deadline:
         found += worker.poll()
         time.sleep(0.01)
@@ -97,6 +110,87 @@ def test_the_worker_runs_the_job_off_the_calling_thread_and_returns_the_outcome(
     else:
         assert outcome.layout is marker and outcome.error is None
     assert worker.poll() == []
+
+
+@pytest.fixture
+def process_worker(tmp_path, monkeypatch):
+    """A worker whose spawned child takes the suite's child environment and works in tmp_path;
+    whatever it left running is ended, and every child is gone when the test is over."""
+    for name, value in child_env().items():
+        monkeypatch.setenv(name, value)
+    monkeypatch.chdir(tmp_path)
+    worker = app.ThreadWorker()
+    yield worker
+    worker.end_process()
+    for child in multiprocessing.active_children():  # a finished build's child is reaped late
+        child.join(PROCESS_WAIT_SECONDS)
+
+
+@pytest.mark.parametrize("child_gone_first", [False, True])
+def test_a_process_build_returns_its_outcome_with_its_token_once(process_worker, child_gone_first):
+    text = "x" * 1_000_000  # far more than a start-up pipe holds
+    started = time.perf_counter()
+    process_worker.start_process(7, sized_job, (text,))
+    call_seconds = time.perf_counter() - started
+    (child,) = multiprocessing.active_children()
+    if child_gone_first:  # sent and exited before the first look: still a result, not a loss
+        child.join(PROCESS_WAIT_SECONDS)
+        assert not child.is_alive()
+
+    (outcome,) = wait_for_outcomes(process_worker, seconds=PROCESS_WAIT_SECONDS)
+    total_seconds = time.perf_counter() - started
+
+    assert (outcome.token, outcome.error) == (7, str(len(text)))
+    assert process_worker.poll() == []
+    # started with `spawn` (never `fork` beside Tk), and as a daemon
+    assert isinstance(child, multiprocessing.get_context("spawn").Process) and child.daemon
+    # the window's thread does not wait for the child to start and read its argument
+    assert total_seconds > 0.2, "no real child start-up to compare with"
+    assert call_seconds < total_seconds / 4
+
+
+def test_starting_a_process_ends_the_one_still_running(process_worker, tmp_path):
+    process_worker.start_process(1, sleeping_job, (str(tmp_path / "started"), SLEEP_SECONDS))
+    (first,) = multiprocessing.active_children()
+
+    process_worker.start_process(2, small_job, ("second",))
+
+    assert not first.is_alive(), "the first build was left running"
+    (outcome,) = wait_for_outcomes(process_worker, seconds=PROCESS_WAIT_SECONDS)
+    assert (outcome.token, outcome.error) == (2, "second")
+
+
+def test_ending_a_process_leaves_no_child_and_never_delivers_its_outcome(process_worker, tmp_path):
+    marker = tmp_path / "started"
+    process_worker.start_process(3, sleeping_job, (str(marker), SLEEP_SECONDS))
+    deadline = time.monotonic() + PROCESS_WAIT_SECONDS
+    while not marker.exists() and time.monotonic() < deadline:
+        time.sleep(0.01)
+    seen = time.monotonic()
+    assert marker.exists() and multiprocessing.active_children(), "the job has not started"
+
+    process_worker.end_process()
+
+    deadline = seen + SLEEP_SECONDS / 2
+    while multiprocessing.active_children() and time.monotonic() < deadline:
+        time.sleep(0.01)
+    # gone well before the job's own sleep would have ended it: it was ended, not left to finish
+    assert multiprocessing.active_children() == []
+    time.sleep(max(0, seen + SLEEP_SECONDS + 0.5 - time.monotonic()))  # past that sleep's end
+    assert process_worker.poll() == []
+    process_worker.end_process()  # a second end, and one with nothing started, do nothing
+    app.ThreadWorker().end_process()
+
+
+@pytest.mark.parametrize("job", [vanishing_job, unreadable_job])  # no outcome; one unreadable
+def test_a_process_with_no_readable_outcome_gives_one_failure_with_its_token(process_worker, job):
+    process_worker.start_process(5, job, ())
+
+    (outcome,) = wait_for_outcomes(process_worker, seconds=PROCESS_WAIT_SECONDS)
+
+    assert (outcome.token, outcome.analysis, outcome.layout) == (5, None, None)
+    assert outcome.error and "\n" not in outcome.error and "Traceback" not in outcome.error
+    assert process_worker.poll() == []
 
 
 class RecordingRoot:

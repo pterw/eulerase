@@ -272,6 +272,14 @@ def _unwritable(error: OSError, after: str = "") -> str:
     )
 
 
+def run_in_process(connection, job_in, function: Callable[..., BuildOutcome], token: int):
+    """The child's whole job: take its arguments, run the build and send its outcome back. Here,
+    not in the window's module, so the spawned child imports no toolkit."""
+    args = job_in.recv()
+    connection.send(function(token, *args))
+    connection.close()
+
+
 def _records(form: FormValues) -> list[Record]:
     parse = sequence.parse_kmer_list if form.input_mode == "kmers" else sequence.parse_records
     return parse(form.text)
