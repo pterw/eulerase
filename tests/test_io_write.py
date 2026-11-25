@@ -94,11 +94,6 @@ def test_settings_travel_in_fasta_and_genbank():
     assert all(line in _words(r.annotations["comment"]) for r in gb)
 
 
-def test_genbank_date_is_set_by_the_writer():
-    locus = genbank_text(_repeat()).splitlines()[0]
-    assert locus.startswith("LOCUS") and locus.endswith("01-JAN-1980")
-
-
 @pytest.mark.parametrize(
     "case", [_three_reads_with_orfs, _ten_copies], ids=["with-orfs", "zero-orfs"]
 )
@@ -253,18 +248,9 @@ def test_non_ascii_contig_is_refused_as_fasta_with_its_name():
     with pytest.raises(EuleraseError, match="ctg1") as refused:
         fasta_text(a)
     assert "ASCII" in str(refused.value)
-    with pytest.raises(EuleraseError, match="ctg1"):
-        gfa_text(a)
-    # digits and commas pass the FASTA writer but not the GFA one; other letters are still written
-    commas = _analysis(['A,B"A,B"A'], k=3)
-    assert fasta_text(commas)
-    with pytest.raises(EuleraseError, match="ctg1"):
-        gfa_text(commas)
-    digits = _analysis(["AC1AC1AC1"], k=3)  # only digits outside A to Z
-    assert fasta_text(digits)
-    with pytest.raises(EuleraseError, match="ctg1"):
-        gfa_text(digits)
-    assert "LEMON" in gfa_text(_analysis(["LEMONLEMONADE"], k=3))
+    # digits and commas pass the FASTA writer (the GFA writer refuses them: see its own test)
+    assert fasta_text(_analysis(['A,B"A,B"A'], k=3))
+    assert fasta_text(_analysis(["AC1AC1AC1"], k=3))  # only digits outside A to Z
 
 
 def test_a_contig_holding_a_header_character_is_refused_as_fasta_with_its_name():
@@ -274,14 +260,6 @@ def test_a_contig_holding_a_header_character_is_refused_as_fasta_with_its_name()
     with pytest.raises(EuleraseError, match="ctg1") as refused:
         fasta_text(a)
     assert ">" in str(refused.value)
-
-
-def _first_difference(expected: str, actual: str) -> int | None:
-    """Index of the first differing character, None when the texts are identical."""
-    if expected == actual:
-        return None
-    pairs = zip(expected, actual, strict=False)
-    return next((i for i, (x, y) in enumerate(pairs) if x != y), min(len(expected), len(actual)))
 
 
 # The expected texts below are typed from the frozen formats and worked by hand (spec 5.1).
@@ -459,9 +437,9 @@ _REPEAT_CSV = {
 )
 def test_text_outputs_are_exact_for_the_worked_cases(case, fasta, genbank, gfa, csv_texts):
     a = case()
-    assert _first_difference(fasta, fasta_text(a)) is None
-    assert _first_difference(genbank, genbank_text(a)) is None
-    assert _first_difference(gfa, gfa_text(a)) is None
+    assert fasta_text(a) == fasta
+    assert genbank_text(a) == genbank
+    assert gfa_text(a) == gfa
     assert list(csv_texts) == list(TABLES)
     assert list(csv_paths("out/x").items()) == [
         ("edges", "out/x_edges.csv"),
@@ -471,14 +449,7 @@ def test_text_outputs_are_exact_for_the_worked_cases(case, fasta, genbank, gfa, 
         ("assembly", "out/x_assembly.csv"),
     ]
     for table, text in csv_texts.items():
-        assert _first_difference(text, csv_text(a, table)) is None
-
-
-def test_oracle_rejects_a_changed_byte():
-    a = _ten_copies()
-    changed = _TEN_FASTA.replace("ATGC\n", "ATGG\n")
-    assert _first_difference(changed, fasta_text(a)) == len(changed) - 2
-    assert _first_difference(_TEN_GENBANK.replace("atgc", "atgg"), genbank_text(a)) is not None
+        assert csv_text(a, table) == text
 
 
 def _written(tmp_path: Path) -> list[tuple[str, bytes]]:
@@ -617,13 +588,6 @@ def test_gfa_round_trip(i):
         assert not a.contigs and segments == [] and links == []
         assert gfa_text(a).count("\n") == 1
         assert csv_text(a, "Contigs") == ",".join(columns("Contigs")) + "\n"
-
-
-def test_a_circular_contig_links_to_itself():
-    # ATGCATGCATGC at k=3 is the one circular contig ATGC, which has one link, to itself
-    _, segments, links = _parse_gfa(gfa_text(_repeat()))
-    assert [name for name, _, _ in segments] == ["ctg1"]
-    assert links == [("ctg1", "+", "ctg1", "+", "0M")]
 
 
 def test_oracle_rejects_a_wrong_gfa_link():

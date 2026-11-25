@@ -40,8 +40,9 @@ def _analyses():
 
 
 def _texts(a):
-    texts = [a.headline, *a.notes, fasta_text(a)]
+    texts = [a.headline, *a.notes, fasta_text(a), gfa_text(a)]
     texts += [header for table in TABLES for header in columns(table)]
+    texts += [csv_text(a, table) for table in TABLES]
     return texts + [genbank_text(a)] if a.dna else texts
 
 
@@ -54,11 +55,6 @@ def test_every_kind_of_note_is_given_by_some_input():
 
 def test_no_output_names_a_count_as_coverage_or_depth():
     texts = [t for a in _analyses() for t in _texts(a)]
-    assert [(i, barred_in(t)) for i, t in enumerate(texts) if barred_in(t)] == []
-
-
-def test_gfa_and_csv_do_not_name_a_count_as_coverage_or_depth():
-    texts = [t for a in _analyses() for t in (gfa_text(a), *(csv_text(a, n) for n in TABLES))]
     assert [(i, barred_in(t)) for i, t in enumerate(texts) if barred_in(t)] == []
 
 
