@@ -14,8 +14,8 @@
   <img src="https://img.shields.io/badge/lint-ruff-blue" alt="Linted with Ruff">
 </p>
 
-Eulerase is a desktop and command-line tool for learning and exploring de Bruijn graphs. Given
-sequences and a k, it:
+Eulerase is a desktop app with a window, and a command-line tool, for learning and exploring de
+Bruijn graphs. Given sequences and a k, it:
 
 1. builds the de Bruijn graph (nodes are (k-1)-mers, edges are k-mers);
 2. finds a minimum set of Eulerian trails that uses every edge once, and lets you step through the
@@ -63,9 +63,18 @@ trail 1 (7 edges): ASEULERA
 
 ## Install and check
 
-Python 3.13 or later is required. Eulerase is run from a clone of this repository; the release
-workflow publishes each release, after its GitHub release, to TestPyPI and then PyPI. From the
-clone, in a virtual environment:
+Python 3.13 or later is required. In a virtual environment, `python -m pip install eulerase`
+installs the package and its `eulerase` command. To get the command on its own, without managing an
+environment, `pipx install eulerase` does the same. The release workflow publishes each release,
+after its GitHub release, to TestPyPI and then PyPI.
+
+Type `eulerase` to open the window, or `eulerase --seq LEMONLEMONADE` to run the command line, as
+the examples below do.
+
+### Work from a clone
+
+A contributor works from a clone of this repository (see [CONTRIBUTING.md](CONTRIBUTING.md)). From
+the clone, in a virtual environment:
 
 ```
 python -m pip install -e ".[dev]"
@@ -84,11 +93,7 @@ The third command runs the tests again on a copy of the tracked files, importing
 that copy, with nothing untracked in reach, so a test that passes only because of the local setup
 fails there. Stage a new file before running it.
 
-Type `eulerase` to open the window, or `eulerase --seq LEMONLEMONADE` to run the command line, as
-the examples below do.
-
-A release of the package carries a source distribution and a wheel. The release workflow makes it
-when a change merged into `main` carries a version that has no tag yet; see
+A release carries a source distribution and a wheel; see
 [CONTRIBUTING.md](CONTRIBUTING.md#releases).
 
 ## The window
@@ -406,7 +411,7 @@ shape. The bytes of an image file are not promised.
 
 ## Status
 
-The Windows executable is not built, so the tool is run from a clone, as described above.
+The package is on PyPI, as described above. A Windows executable is not built; it is a later step.
 
 ## Licence
 

@@ -1,8 +1,8 @@
 # Contributing to Eulerase
 
-Eulerase is a desktop and command-line tool for learning and exploring de Bruijn graphs: Eulerian
-trails and contigs from short sequences. The design, and what is in and out of scope, is in
-[the design spec](docs/superpowers/specs/2026-11-09-eulerase-v0.1-design.md).
+Eulerase is a desktop app with a window, and a command-line tool, for learning and exploring de
+Bruijn graphs: Eulerian trails and contigs from short sequences. The design, and what is in and
+out of scope, is in [the design spec](docs/superpowers/specs/2026-11-09-eulerase-v0.1-design.md).
 
 ## Setup
 
