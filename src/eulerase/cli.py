@@ -173,6 +173,8 @@ def _start_window(args: argparse.Namespace, has_input: bool) -> int:
     try:
         from eulerase.gui.app import start
     except ImportError as err:
+        if err.name not in ("tkinter", "_tkinter"):
+            raise  # some other import failed; the real cause must not be hidden
         raise EuleraseError(
             "The window needs tkinter, which this Python does not have; "
             "the command-line options still work."

@@ -136,7 +136,14 @@ def test_a_file_that_cannot_be_read_fails_before_the_window_opens(starts, capsys
 
 
 def _no_toolkit(monkeypatch):
-    monkeypatch.setitem(sys.modules, "eulerase.gui.app", None)
+    monkeypatch.delitem(sys.modules, "eulerase.gui.app", raising=False)
+    monkeypatch.setitem(sys.modules, "tkinter", None)  # importing tkinter now raises ImportError
+
+
+def _no_c_toolkit(monkeypatch):
+    monkeypatch.delitem(sys.modules, "eulerase.gui.app", raising=False)
+    monkeypatch.delitem(sys.modules, "tkinter", raising=False)
+    monkeypatch.setitem(sys.modules, "_tkinter", None)  # the package imports, its C module fails
 
 
 def _no_display(monkeypatch):
@@ -148,8 +155,12 @@ def _no_display(monkeypatch):
 
 @pytest.mark.parametrize(
     ("setup", "words"),
-    [(_no_toolkit, ["tkinter", "still work"]), (_no_display, ["needs a display"])],
-    ids=["no-toolkit", "no-display"],
+    [
+        (_no_toolkit, ["tkinter", "still work"]),
+        (_no_c_toolkit, ["tkinter", "still work"]),
+        (_no_display, ["needs a display"]),
+    ],
+    ids=["no-toolkit", "no-c-toolkit", "no-display"],
 )
 def test_a_missing_toolkit_or_display_is_one_line_and_exit_1(setup, words, monkeypatch, capsys):
     setup(monkeypatch)
@@ -159,6 +170,16 @@ def test_a_missing_toolkit_or_display_is_one_line_and_exit_1(setup, words, monke
     assert len(err.splitlines()) == 1
     assert "Traceback" not in err
     assert all(word in err for word in words)
+
+
+def test_a_window_import_failing_for_another_reason_is_not_called_a_missing_toolkit(
+    monkeypatch, capsys
+):
+    monkeypatch.setitem(sys.modules, "eulerase.gui.app", None)  # ImportError naming the module
+    with pytest.raises(ImportError) as caught:
+        cli.main([])
+    assert caught.value.name == "eulerase.gui.app"
+    assert "tkinter" not in capsys.readouterr().err
 
 
 def test_running_with_input_does_not_import_the_toolkit():
