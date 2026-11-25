@@ -62,8 +62,10 @@ def verdict(result: subprocess.CompletedProcess) -> str:
     """pytest's own summary line, or the exit status when pytest never ran."""
     lines = result.stdout.strip().splitlines()
     summary = lines[-1] if lines else ""
-    return "passed" if result.returncode == 0 and "1 passed" in summary else (
-        "failed" if result.returncode != 0 and "1 failed" in summary else f"other: {result}"
+    return (
+        "passed"
+        if result.returncode == 0 and "1 passed" in summary
+        else ("failed" if result.returncode != 0 and "1 failed" in summary else f"other: {result}")
     )
 
 

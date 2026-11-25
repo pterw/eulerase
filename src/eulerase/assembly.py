@@ -91,9 +91,7 @@ def clip_tips(ag: nx.DiGraph, k: int) -> tuple[nx.DiGraph, int, int]:
                 continue
             others = ag.successors(node) if leaving else ag.predecessors(node)
             chains = [_chain(ag, node, other, leaving) for other in others]
-            means = [
-                Fraction(sum(ag.edges[e]["multiplicity"] for e in c), len(c)) for c in chains
-            ]
+            means = [Fraction(sum(ag.edges[e]["multiplicity"] for e in c), len(c)) for c in chains]
             best = max(means)
             for chain, mean in zip(chains, means, strict=True):
                 far = chain[-1][1] if leaving else chain[0][0]

@@ -150,8 +150,11 @@ def test_oracle_rejects_a_contig_set_that_repeats_a_kmer():
         # TACGG and TACGC at k=3: TAC and ACG twice, CGG and CGC once. Nodes TA, AC, CG, GG, GC;
         # edges TA>AC, AC>CG, CG>GG, CG>GC. CG has two edges out, so it ends the path from TA:
         # TACG (2 edges, 4 k-mers seen), then the two one-edge branches, CGC before CGG.
-        (["TACGG", "TACGC"], 3, [(1, "TACG", 2, 4, False), (2, "CGC", 1, 1, False),
-                                 (3, "CGG", 1, 1, False)]),
+        (
+            ["TACGG", "TACGC"],
+            3,
+            [(1, "TACG", 2, 4, False), (2, "CGC", 1, 1, False), (3, "CGG", 1, 1, False)],
+        ),
         # AAAA at k=3: AAA twice. One node AA with one edge to itself, so it is one cycle of
         # one edge: the circle is its one letter A, circular, 2 k-mers seen.
         (["AAAA"], 3, [(1, "A", 1, 2, True)]),
