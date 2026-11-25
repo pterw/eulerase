@@ -3,6 +3,7 @@
 from collections import Counter
 
 import pytest
+from figure_probe import overlap
 from genomes import brute_kmers, random_dna
 from matplotlib.backends.backend_agg import FigureCanvasAgg
 from matplotlib.colors import to_rgb
@@ -66,13 +67,6 @@ def test_bars_show_the_spectrum_of_the_input(both):
     assert drawn_spectrum(ax) == dict(want)
 
 
-def test_oracle_rejects_a_wrong_bar():
-    want = expected_spectrum(False)
-    _, _, ax = chart(False)
-    ax.patches[0].set_height(ax.patches[0].get_height() + 1)
-    assert drawn_spectrum(ax) != dict(want)
-
-
 @BOTH
 def test_the_minimum_is_marked_and_the_bars_it_removes_differ(both):
     minimum = 3
@@ -112,15 +106,6 @@ def test_ticks_are_whole_numbers(reads, both, bars_drawn):
     assert all(label.get_text().isdigit() for _, label in ticks)
 
 
-def _touch(first, second) -> bool:
-    return (
-        first.x0 < second.x1
-        and second.x0 < first.x1
-        and first.y0 < second.y1
-        and second.y0 < first.y1
-    )
-
-
 @pytest.mark.parametrize("minimum", [None, 1, 2, 3, 50])
 def test_every_text_lies_inside_a_small_figure(minimum):
     if minimum == 50:
@@ -138,8 +123,10 @@ def test_every_text_lies_inside_a_small_figure(minimum):
         assert ax.bbox.x0 <= box.x0 and box.x1 <= ax.bbox.x1, label.get_text()
         assert ax.bbox.y0 <= box.y0 and box.y1 < ax.bbox.y1, label.get_text()
         y_ticks = [t for axis, t in ticks if axis is ax.yaxis]
-        assert y_ticks and not any(_touch(box, t.get_window_extent()) for t in y_ticks)
-        assert not any(_touch(box, p.get_window_extent()) for _, _, p in bars(ax))
+        y_boxes = [t.get_window_extent().extents for t in y_ticks]
+        assert y_boxes and not any(overlap(box.extents, other, margin=0) for other in y_boxes)
+        bar_boxes = [p.get_window_extent().extents for _, _, p in bars(ax)]
+        assert not any(overlap(box.extents, other, margin=0) for other in bar_boxes)
 
 
 def test_no_mark_one_colour_and_no_hatch_without_a_minimum():

@@ -3,7 +3,17 @@
 import re
 
 import pytest
-from figure_probe import INPUTS, SAVED_SIZE, SMALL_SIZE, drawn, elements, extent, frame, overlap
+from figure_probe import (
+    INPUTS,
+    SAVED_SIZE,
+    SMALL_SIZE,
+    built,
+    drawn,
+    elements,
+    extent,
+    frame,
+    overlap,
+)
 from genomes import random_dna
 from matplotlib.backends.backend_agg import FigureCanvasAgg
 from matplotlib.figure import Figure
@@ -12,19 +22,12 @@ from matplotlib.patches import Circle
 from eulerase import render
 from eulerase.analysis import Settings, analyze, settings_text
 from eulerase.errors import EuleraseError
-from eulerase.render import MAX_DRAW_NODES, compute_layout, draw_figure, save_figure
+from eulerase.render import MAX_DRAW_NODES, compute_layout, save_figure
 from eulerase.sequence import Record
 
 
 def _analysis(sequence: str, k: int = 3, **settings):
     return analyze([Record("seq1", sequence)], Settings(k=k, **settings))
-
-
-def _figure(a, upto=None):
-    fig = Figure(figsize=(8, 6))
-    layout = compute_layout(a)
-    draw_figure(fig, a, layout, upto)
-    return fig, layout
 
 
 # A path with no repeated edge and no pair of opposite edges: ten distinct 3-mers in one trail.
@@ -73,7 +76,7 @@ def test_every_node_is_drawn_visibly_and_apart(name, size):
 def test_figure_title_carries_the_settings():
     settings = Settings(k=3, both_strands=True, min_multiplicity=1)
     a = analyze([Record("seq1", PATH)], settings)
-    fig, _ = _figure(a)
+    fig = built(a)
     assert any(settings_text(settings) in t.get_text() for t in fig.texts)
 
 
@@ -117,6 +120,7 @@ def test_layout_is_none_above_the_drawing_limit_and_the_figure_says_why():
     everything = " ".join(" ".join(t.get_text().split()) for t in fig.texts + fig.axes[0].texts)
     assert everything.count(" ".join(a.headline.split())) == 1
     assert not frame(fig, "reading")
+    assert " ".join(render.READING.split()) not in everything
     (note,) = elements(fig, "note")
     assert not any(overlap(extent(fig, note), extent(fig, t), margin=0) for t in fig.texts)
 
@@ -148,7 +152,7 @@ def test_the_drawing_limit_counts_nodes_and_arrows(monkeypatch, node_limit, arro
     assert nodes != arrows
     assert (nodes > node_limit, arrows > arrow_limit) == ("nodes" in over, "arrows" in over)
 
-    fig, layout = _figure(a)
+    fig, layout = drawn(a)
     if not over:
         assert layout is not None
         return

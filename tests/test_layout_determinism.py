@@ -64,10 +64,6 @@ def _layouts_under(hash_seeds: list[int], scratch) -> list:
                 child.wait()
 
 
-def _same_layout(one: list, other: list) -> bool:
-    return one == other
-
-
 def _analysis(*sequences: str, k: int):
     return analyze([Record(f"r{i}", s) for i, s in enumerate(sequences)], Settings(k=k))
 
@@ -191,7 +187,7 @@ def test_layout_gives_every_node_one_distinct_point_inside_the_plot_area(aspect)
 def test_layout_is_identical_across_hash_seeds(tmp_path):
     first, *others = _layouts_under([1, 2, 3, 4], tmp_path)
     for other in others:
-        assert _same_layout(first, other)
+        assert other == first
 
 
 def test_layout_is_a_function_of_the_analysis_and_the_aspect_only():
@@ -201,8 +197,3 @@ def test_layout_is_a_function_of_the_analysis_and_the_aspect_only():
     # Rows of 2 at aspect 1.0 and one row of all the nodes at aspect 6.0.
     assert _widest_columns(len(a.nodes), 1.0) != _widest_columns(len(a.nodes), 6.0)
     assert compute_layout(a, 1.0) != compute_layout(a, 6.0)
-
-
-def test_oracle_rejects_a_different_layout():
-    assert _same_layout([["A", [0.0, 1.0]]], [["A", [0.0, 1.0]]])
-    assert not _same_layout([["A", [0.0, 1.0]]], [["A", [0.0, 1.5]]])

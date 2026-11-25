@@ -155,22 +155,26 @@ def test_the_marks_and_the_count_stay_inside_their_labels_slot(copies, monkeypat
     scale = axes.get_window_extent().height / to_px  # the plot's height in points
     slots = {}
     for key, placed in placement.placed.items():
-        low, high = (axes.transData.transform((x / scale, 0))[0] for x in placed.box[::2])
-        slots[key.removeprefix("label:")] = (low, high)
+        x0, y0, x1, y1 = placed.box
+        (low, bottom), (high, top) = axes.transData.transform(
+            [(x0 / scale, y0 / scale), (x1 / scale, y1 / scale)]
+        )
+        slots[key.removeprefix("label:")] = (low, high, bottom, top)
     inked = elements(fig, "mark") + elements(fig, "count")
     assert {artist.get_gid().split(":")[0] for artist in inked} == {
         "mark" if copies <= render.MAX_COPY_MARKS else "count"
     }
-    first, last = slots["1:AB"]
+    first, last = slots["1:AB"][:2]
     if copies <= render.MAX_COPY_MARKS:
         unshrunk = copies * render.MARK_PITCH * to_px
     else:
         unshrunk = len(f"{copies}/{copies}") * render.MONO_ADVANCE * render.COUNT_PT * to_px
     assert unshrunk > last - first
     for artist in inked:
-        low, high = slots[artist.get_gid().split(":", 1)[1]]
+        low, high, bottom, top = slots[artist.get_gid().split(":", 1)[1]]
         box = extent(fig, artist)
         assert low - 0.5 <= box[0] and box[2] <= high + 0.5, artist.get_gid()
+        assert bottom - 0.5 <= box[1] and box[3] <= top + 0.5, artist.get_gid()
 
 
 @pytest.mark.parametrize("name", ("lemon", "repeated", "shared"))
