@@ -129,6 +129,11 @@ def process_worker(tmp_path, monkeypatch):
 @pytest.mark.parametrize("child_gone_first", [False, True])
 def test_a_process_build_returns_its_outcome_with_its_token_once(process_worker, child_gone_first):
     text = "x" * 1_000_000  # far more than a start-up pipe holds
+    # the interpreter's first start pays a one-time cost (the resource tracker), so time the second
+    process_worker.start_process(6, small_job, ("first",))
+    assert [o.token for o in wait_for_outcomes(process_worker, seconds=PROCESS_WAIT_SECONDS)] == [6]
+    for first_child in multiprocessing.active_children():
+        first_child.join(PROCESS_WAIT_SECONDS)
     started = time.perf_counter()
     process_worker.start_process(7, sized_job, (text,))
     call_seconds = time.perf_counter() - started
