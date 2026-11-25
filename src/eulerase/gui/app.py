@@ -47,6 +47,8 @@ VIEW_BUTTONS = ("Zoom", "Pan", "Reset view")
 STEP_BUTTONS = ("First", "Back", "Play", "Forward", "Last")  # the third reads "Pause" while playing
 STEP_METHODS = ("step_start", "step_back", "toggle_play", "step_forward", "step_end")
 ASSEMBLY = "Assembly"
+TABLE_ROWS = 6  # rows each table asks for, so the pane opens with six whole rows
+STRIP_PAD_PX = 4  # above and below the strip under the graph
 WIDTH_ROWS = 50  # rows of a table read to size its columns
 MAX_COLUMN_PX = 320  # a longer cell scrolls instead of widening the table
 CELL_PAD_PX = 16
@@ -293,13 +295,13 @@ class Window:
         self.explorer.grid(row=0, column=1, sticky="nsew")
         self.headline = ttk.Label(self.explorer, text="", style="Heading.TLabel")
         self.headline.pack(fill="x", padx=8, pady=(0, 6))
-        divider = ttk.PanedWindow(self.explorer, orient="vertical")
-        divider.pack(fill="both", expand=True)
-        graph = ttk.Frame(divider)
+        self.divider = ttk.PanedWindow(self.explorer, orient="vertical")
+        self.divider.pack(fill="both", expand=True)
+        graph = ttk.Frame(self.divider)
         self.canvas_frame = tkinter.Frame(graph, background=render.SURFACE)
         self.canvas_frame.pack(fill="both", expand=True)
         self.strip = ttk.Frame(graph)
-        self.strip.pack(fill="x", pady=4)
+        self.strip.pack(fill="x", pady=STRIP_PAD_PX)
         self.legend_frame = ttk.Frame(self.strip)
         self.legend_frame.pack(side="left")
         self.view_buttons = {
@@ -309,9 +311,9 @@ class Window:
             button.pack(side="right", padx=(6, 0))
         self.steps_frame = ttk.Frame(graph)
         self.steps_frame.pack(fill="x")
-        self.tables_frame = ttk.Frame(divider)
-        divider.add(graph, weight=3)
-        divider.add(self.tables_frame, weight=1)
+        self.tables_frame = ttk.Frame(self.divider)
+        self.divider.add(graph, weight=3)
+        self.divider.add(self.tables_frame, weight=1)
         self.notebook = None  # made by the first result: its tabs are the tables of that result
         self.trees = {}
         self.notes = {}
@@ -484,13 +486,24 @@ class Window:
                 self._assembly_page(page)
             else:
                 self._table_pane(page, table.name).pack(fill="both", expand=True)
+        self._give_tables_their_height()
 
-    def _table_pane(self, parent, name: str) -> ttk.Frame:
+    def _give_tables_their_height(self) -> None:
+        """The divider was placed while the tables pane was empty and gave it almost nothing;
+        move it once, now the tabs ask for their height. The divider still drags both ways."""
+        self.root.update_idletasks()
+        wanted = self.tables_frame.winfo_reqheight()
+        graph_least = (
+            self.strip.winfo_reqheight() + self.steps_frame.winfo_reqheight() + 2 * STRIP_PAD_PX
+        )
+        self.divider.sashpos(0, max(graph_least, self.divider.winfo_height() - wanted))
+
+    def _table_pane(self, parent, name: str, rows: int = TABLE_ROWS) -> ttk.Frame:
         """A table with both scroll bars and its note; the tree and note are kept under `name`."""
         pane = ttk.Frame(parent)
         pane.columnconfigure(0, weight=1)
         pane.rowconfigure(0, weight=1)
-        tree = ttk.Treeview(pane, show="headings", selectmode="browse", height=5)
+        tree = ttk.Treeview(pane, show="headings", selectmode="browse", height=rows)
         down = ttk.Scrollbar(pane, orient="vertical", command=tree.yview)
         across = ttk.Scrollbar(pane, orient="horizontal", command=tree.xview)
         tree.configure(yscrollcommand=down.set, xscrollcommand=across.set)
@@ -515,7 +528,8 @@ class Window:
         left.grid(row=0, column=0, sticky="nsew")
         left.columnconfigure(0, weight=1)
         left.rowconfigure(0, weight=1)
-        self._table_pane(left, ASSEMBLY).grid(row=0, column=0, columnspan=2, sticky="nsew")
+        # Three rows: with the detail lines below it the page is as tall as the others.
+        self._table_pane(left, ASSEMBLY, rows=3).grid(row=0, column=0, columnspan=2, sticky="nsew")
         self.details = tkinter.Text(
             left,
             height=4,
