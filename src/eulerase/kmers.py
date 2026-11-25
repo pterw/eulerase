@@ -1,7 +1,7 @@
 """Turn records into k-mers, with the one check of k and the one input limit."""
 
 from collections import Counter
-from collections.abc import Iterator, Sequence
+from collections.abc import Sequence
 from dataclasses import dataclass
 
 from eulerase.errors import EuleraseError
@@ -27,18 +27,9 @@ def validate_k(k: object) -> int:
 
 def _limit_error(n: int) -> EuleraseError:
     return EuleraseError(
-        f"Input produced more than {MAX_KMERS:,} k-mers (counted {n:,} before stopping); "
-        f"the limit is {MAX_KMERS:,}. Use a smaller input or a larger k."
+        f"Input would produce {n:,} k-mers, over the limit of {MAX_KMERS:,}; "
+        "use a smaller input or a larger k."
     )
-
-
-def _iter_kmers(sequences: Sequence[str], k: int, both: bool) -> Iterator[str]:
-    """Yield each sequence's k-mers, then its reverse complement's when `both`, lazily so
-    the caller can stop as soon as the limit is passed."""
-    for seq in sequences:
-        for s in (seq, reverse_complement(seq)) if both else (seq,):
-            for i in range(len(s) - k + 1):
-                yield s[i : i + k]
 
 
 def _finish(items: list[str], k: int, short_records: int, unique: bool) -> Kmers:
@@ -62,11 +53,15 @@ def from_sequences(records: Sequence[Record], k: int, *, both_strands: bool, uni
     long_enough = [s for s in sequences if len(s) >= k]
     if not long_enough:
         raise EuleraseError(f"No record is at least k={k} letters long; use a smaller k.")
-    items: list[str] = []
-    for km in _iter_kmers(long_enough, k, both_strands):
-        items.append(km)
-        if len(items) > MAX_KMERS:
-            raise _limit_error(len(items))
+    total = sum(len(s) - k + 1 for s in long_enough) * (2 if both_strands else 1)
+    if total > MAX_KMERS:
+        raise _limit_error(total)
+    items = [
+        s[i : i + k]
+        for seq in long_enough
+        for s in ((seq, reverse_complement(seq)) if both_strands else (seq,))
+        for i in range(len(s) - k + 1)
+    ]
     return _finish(items, k, len(sequences) - len(long_enough), unique)
 
 

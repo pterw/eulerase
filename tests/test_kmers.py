@@ -123,15 +123,23 @@ def test_limit_cases(monkeypatch, mode, size, both, accepted):
 
 def test_oversized_input_is_refused_before_the_list_is_built(monkeypatch):
     monkeypatch.setattr(kmers, "MAX_KMERS", 1000)
-    record = _records("ACGT" * 250_000)
+    record = _records("ACGT" * 5_000)
+    k = 10_000
+    count = 2 * (len(record[0].sequence) - k + 1)  # both strands
+    peak_bound = 1_000_000
+    assert count == 20_002
+    assert count != 1_000 + 1  # a message made by stopping early cannot name the count
+    assert (1_000 + 1) * k > peak_bound  # building strings until the limit cannot stay under
     tracemalloc.start()
     try:
-        with pytest.raises(EuleraseError, match="1,000"):
-            kmers.from_sequences(record, 5, both_strands=True, unique=False)
+        with pytest.raises(EuleraseError) as refused:
+            kmers.from_sequences(record, k, both_strands=True, unique=False)
         _, peak = tracemalloc.get_traced_memory()
     finally:
         tracemalloc.stop()
-    assert peak < 8_000_000
+    assert "20,002" in str(refused.value)
+    assert "1,000" in str(refused.value)
+    assert peak < peak_bound
 
 
 def test_both_strands_refuses_non_dna_naming_the_letters():
