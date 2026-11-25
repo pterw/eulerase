@@ -112,6 +112,47 @@ def _column_width(font, header: str, cells) -> int:
     return min(max(font.measure(text) for text in (header, *cells)) + CELL_PAD_PX, MAX_COLUMN_PX)
 
 
+def _scrolled(parent) -> ttk.Frame:
+    """A frame inside a vertically scrolled area that fills what `parent` has left. Its
+    scrollbar shows only when the frame is taller than the area; the area is as wide as the
+    frame asks and as tall as it is given."""
+    area = ttk.Frame(parent)
+    area.pack(fill="both", expand=True)
+    area.columnconfigure(0, weight=1)
+    area.rowconfigure(0, weight=1)
+    canvas = tkinter.Canvas(area, width=1, height=1, highlightthickness=0, background=render.WINDOW)
+    bar = ttk.Scrollbar(area, orient="vertical", command=canvas.yview)
+    canvas.grid(row=0, column=0, sticky="nsew")
+    bar.grid(row=0, column=1, sticky="ns")
+    inner = ttk.Frame(canvas)
+    canvas.create_window(0, 0, window=inner, anchor="nw")
+
+    def fit(event) -> None:
+        canvas.configure(width=event.width, scrollregion=(0, 0, event.width, event.height))
+
+    def show_bar(first: str, last: str) -> None:
+        bar.set(first, last)
+        if float(first) <= 0 and float(last) >= 1:
+            bar.grid_remove()
+        else:
+            bar.grid()
+
+    def reveal(event) -> None:
+        """Scroll so the control that took the focus is in view (Tab can reach a hidden one)."""
+        widget = event.widget
+        if not str(widget).startswith(f"{inner}."):
+            return
+        top = widget.winfo_rooty() - inner.winfo_rooty()
+        shown = canvas.canvasy(0)
+        target = min(top, max(shown, top + widget.winfo_height() - canvas.winfo_height()))
+        canvas.yview_moveto(target / inner.winfo_height())
+
+    inner.bind("<Configure>", fit)
+    inner.winfo_toplevel().bind("<FocusIn>", reveal, add="+")
+    canvas.configure(yscrollcommand=show_bar)
+    return inner
+
+
 class Window:
     """The frame of the window; `bind` attaches every callback to the presenter."""
 
@@ -175,11 +216,21 @@ class Window:
         self.min_multiplicity_text = tkinter.StringVar(value="")
         self.clip_tips = tkinter.BooleanVar(value=False)
 
-        ttk.Label(side, text="Input", style="Heading.TLabel").pack(anchor="w")
+        # The foot is packed first, so the form's area gets only what is left; Build and Stop
+        # are never inside it, so they are never scrolled out.
+        buttons = ttk.Frame(side)
+        buttons.pack(side="bottom", fill="x", pady=(12, 0))
+        self.build_button = ttk.Button(buttons, text="Build  Ctrl+Enter", style="Primary.TButton")
+        self.stop_button = ttk.Button(buttons, text="Stop", state="disabled")
+        self.build_button.pack(side="left")
+        self.stop_button.pack(side="left", padx=(8, 0))
+        form = _scrolled(side)
+
+        ttk.Label(form, text="Input", style="Heading.TLabel").pack(anchor="w")
         self.text = tkinter.Text(
-            side,
+            form,
             width=34,
-            height=11,
+            height=5,
             wrap="char",
             font="TkFixedFont",
             background=render.SURFACE,
@@ -192,47 +243,42 @@ class Window:
             undo=True,
         )
         self.text.pack(fill="x", pady=(4, 6))
+        modes = ttk.Frame(form)
+        modes.pack(fill="x")
         self.mode_buttons = [
-            ttk.Radiobutton(side, text=label, variable=self.mode, value=value)
+            ttk.Radiobutton(modes, text=label, variable=self.mode, value=value)
             for value, label in MODES
         ]
         for button in self.mode_buttons:
-            button.pack(anchor="w")
-        files = ttk.Frame(side)
+            button.pack(side="left", padx=(0, 8))
+        files = ttk.Frame(form)
         files.pack(fill="x", pady=8)
         self.open_button = ttk.Button(files, text="Open file")
         self.examples_button = ttk.Button(files, text="Examples")
         self.open_button.pack(side="left")
         self.examples_button.pack(side="left", padx=(8, 0))
 
-        ttk.Label(side, text="Settings", style="Heading.TLabel").pack(anchor="w", pady=(8, 0))
-        k_row = ttk.Frame(side)
+        ttk.Label(form, text="Settings", style="Heading.TLabel").pack(anchor="w", pady=(8, 0))
+        k_row = ttk.Frame(form)
         k_row.pack(fill="x", pady=4)
         ttk.Label(k_row, text="k (k-mer length)").pack(side="left")
         self.k_entry = ttk.Entry(k_row, textvariable=self.k_text, width=5)
         self.k_entry.pack(side="right")
-        ttk.Checkbutton(side, text="Both strands (DNA only)", variable=self.both_strands).pack(
+        ttk.Checkbutton(form, text="Both strands (DNA only)", variable=self.both_strands).pack(
             anchor="w", pady=2
         )
-        ttk.Checkbutton(side, text="Treat as a set (each k-mer once)", variable=self.unique).pack(
+        ttk.Checkbutton(form, text="Treat as a set (each k-mer once)", variable=self.unique).pack(
             anchor="w", pady=2
         )
-        min_row = ttk.Frame(side)
+        min_row = ttk.Frame(form)
         min_row.pack(fill="x", pady=(6, 0))
         ttk.Label(min_row, text="Minimum multiplicity").pack(side="left")
         ttk.Entry(min_row, textvariable=self.min_multiplicity_text, width=5).pack(side="right")
-        self._help(side, MIN_MULTIPLICITY_HELP)
-        ttk.Checkbutton(side, text="Clip tips", variable=self.clip_tips).pack(
+        self._help(form, MIN_MULTIPLICITY_HELP)
+        ttk.Checkbutton(form, text="Clip tips", variable=self.clip_tips).pack(
             anchor="w", pady=(6, 0)
         )
-        self._help(side, CLIP_TIPS_HELP)
-
-        buttons = ttk.Frame(side)
-        buttons.pack(side="bottom", fill="x", pady=(12, 0))
-        self.build_button = ttk.Button(buttons, text="Build  Ctrl+Enter", style="Primary.TButton")
-        self.stop_button = ttk.Button(buttons, text="Stop", state="disabled")
-        self.build_button.pack(side="left")
-        self.stop_button.pack(side="left", padx=(8, 0))
+        self._help(form, CLIP_TIPS_HELP)
 
     @staticmethod
     def _help(parent, text: str) -> None:
