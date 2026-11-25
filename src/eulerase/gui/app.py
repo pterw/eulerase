@@ -12,8 +12,19 @@ import tkinter.ttk as ttk
 from dataclasses import dataclass
 from pathlib import Path
 
+from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+from matplotlib.figure import Figure
+
 from eulerase import render
-from eulerase.gui.presenter import EXAMPLES, EXPORT_KINDS, MIN_WINDOW, FormValues, fit_window
+from eulerase.gui.presenter import (
+    EXAMPLES,
+    EXPORT_KINDS,
+    MIN_WINDOW,
+    FormValues,
+    ResultView,
+    TableView,
+    fit_window,
+)
 
 MODES = (("sequences", "Sequences or FASTA"), ("kmers", "K-mer list"))
 MIN_MULTIPLICITY_HELP = (
@@ -28,6 +39,10 @@ CLIP_TIPS_HELP = (
 )
 SIDEBAR_TEXT_WIDTH = 250  # pixels at which the help sentences wrap
 VIEW_BUTTONS = ("Zoom", "Pan", "Reset view")
+ASSEMBLY = "Assembly"
+WIDTH_ROWS = 50  # rows of a table read to size its columns
+MAX_COLUMN_PX = 320  # a longer cell scrolls instead of widening the table
+CELL_PAD_PX = 16
 TK_KEY_NAMES = {"Ctrl": "Control", "Esc": "Escape", "Enter": "Return"}
 
 
@@ -74,6 +89,15 @@ def tk_sequence(shortcut: str) -> str:
     if "Shift" not in parts and len(keys[-1]) == 1:
         keys[-1] = keys[-1].lower()
     return "<" + "-".join(keys) + ">"
+
+
+def _wrap_to_width(event) -> None:
+    event.widget.configure(wraplength=max(event.width, 100))
+
+
+def _column_width(font, header: str, cells) -> int:
+    """The widest of the header and the cells given, plus padding, capped."""
+    return min(max(font.measure(text) for text in (header, *cells)) + CELL_PAD_PX, MAX_COLUMN_PX)
 
 
 class Window:
@@ -228,6 +252,9 @@ class Window:
         self.tables_frame = ttk.Frame(divider)
         divider.add(graph, weight=3)
         divider.add(self.tables_frame, weight=1)
+        self.notebook = None  # made by the first result: its tabs are the tables of that result
+        self.trees = {}
+        self.notes = {}
 
     def _status_bar(self) -> None:
         bar = ttk.Frame(self.root, padding=(8, 2))
@@ -352,6 +379,120 @@ class Window:
 
     def save_figure(self, analysis, path: str) -> None:
         render.save_figure(analysis, path)  # EuleraseError or OSError: the presenter shows both
+
+    def show_result(self, result: ResultView) -> None:
+        if self.notebook is None:
+            self._make_tabs(result.tables)
+        for table in result.tables:
+            self._fill_table(table)
+        self._set_details(result.details)
+        render.draw_spectrum(self.spectrum, result.analysis)
+        self.spectrum_canvas.draw_idle()
+
+    def clear_result(self) -> None:
+        if self.notebook is None:
+            return
+        for name, tree in self.trees.items():
+            tree.delete(*tree.get_children())
+            self.notes[name].grid_remove()
+        self._set_details(())
+        self.spectrum.clear()
+        self.spectrum_canvas.draw_idle()
+
+    def _make_tabs(self, tables: tuple[TableView, ...]) -> None:
+        self.notebook = ttk.Notebook(self.tables_frame)
+        self.notebook.pack(fill="both", expand=True)
+        for table in tables:
+            page = ttk.Frame(self.notebook)
+            self.notebook.add(page, text=table.name)
+            if table.name == ASSEMBLY:
+                self._assembly_page(page)
+            else:
+                self._table_pane(page, table.name).pack(fill="both", expand=True)
+
+    def _table_pane(self, parent, name: str) -> ttk.Frame:
+        """A table with both scroll bars and its note; the tree and note are kept under `name`."""
+        pane = ttk.Frame(parent)
+        pane.columnconfigure(0, weight=1)
+        pane.rowconfigure(0, weight=1)
+        tree = ttk.Treeview(pane, show="headings", selectmode="browse", height=5)
+        down = ttk.Scrollbar(pane, orient="vertical", command=tree.yview)
+        across = ttk.Scrollbar(pane, orient="horizontal", command=tree.xview)
+        tree.configure(yscrollcommand=down.set, xscrollcommand=across.set)
+        tree.grid(row=0, column=0, sticky="nsew")
+        down.grid(row=0, column=1, sticky="ns")
+        across.grid(row=1, column=0, sticky="ew")
+        note = ttk.Label(pane, style="Muted.TLabel")
+        note.grid(row=2, column=0, columnspan=2, sticky="ew")
+        note.bind("<Configure>", _wrap_to_width)
+        # The tabs exist only once a result is shown, after `bind` has set the presenter.
+        tree.bind("<<TreeviewSelect>>", lambda event: self._row_selected(name))
+        self.trees[name] = tree
+        self.notes[name] = note
+        return pane
+
+    def _assembly_page(self, page) -> None:
+        """The measure table and the detail lines at the left, the spectrum chart at the right."""
+        page.columnconfigure(0, weight=1)
+        page.columnconfigure(1, weight=2)
+        page.rowconfigure(0, weight=1)
+        left = ttk.Frame(page)
+        left.grid(row=0, column=0, sticky="nsew")
+        left.columnconfigure(0, weight=1)
+        left.rowconfigure(0, weight=1)
+        self._table_pane(left, ASSEMBLY).grid(row=0, column=0, columnspan=2, sticky="nsew")
+        self.details = tkinter.Text(
+            left,
+            height=4,
+            wrap="word",
+            state="disabled",
+            font="TkDefaultFont",
+            background=render.SURFACE,
+            foreground=render.INK,
+            relief="flat",
+            highlightthickness=1,
+            highlightbackground=render.RULE,
+        )
+        scroll = ttk.Scrollbar(left, orient="vertical", command=self.details.yview)
+        self.details.configure(yscrollcommand=scroll.set)
+        self.details.grid(row=1, column=0, sticky="ew", pady=(4, 0))
+        scroll.grid(row=1, column=1, sticky="ns", pady=(4, 0))
+        self.spectrum = Figure(facecolor=render.SURFACE)
+        self.spectrum_canvas = FigureCanvasTkAgg(self.spectrum, master=page)
+        chart = self.spectrum_canvas.get_tk_widget()
+        chart.configure(width=240, height=120)  # small, so the chart follows the space it gets
+        chart.grid(row=0, column=1, sticky="nsew", padx=(8, 0))
+
+    def _fill_table(self, table: TableView) -> None:
+        tree = self.trees[table.name]
+        tree.delete(*tree.get_children())
+        tree.configure(columns=table.columns)
+        font = tkinter.font.nametofont("TkDefaultFont")
+        for i, column in enumerate(table.columns):
+            cells = (row[i] for row in table.rows[:WIDTH_ROWS])
+            tree.heading(column, text=column)
+            tree.column(column, width=_column_width(font, column, cells), stretch=False, anchor="w")
+        for row in table.rows:
+            tree.insert("", "end", values=row)
+        note = self.notes[table.name]
+        if table.note is None:
+            note.grid_remove()
+        else:
+            note.configure(text=table.note)
+            note.grid()
+
+    def _set_details(self, lines) -> None:
+        self.details.configure(state="normal")
+        self.details.delete("1.0", "end")
+        self.details.insert("1.0", "\n".join(lines))
+        self.details.configure(state="disabled")
+
+    def _row_selected(self, name: str) -> None:
+        """Pass on the row's position: Tk turns numeric-looking cell text into numbers."""
+        tree = self.trees[name]
+        selection = tree.selection()  # empty while a table is being refilled
+        if selection:
+            self.presenter.row_selected(name, tree.index(selection[0]))
 
     def show_busy(self, busy: bool) -> None:
         self.stop_button.state(["!disabled" if busy else "disabled"])
