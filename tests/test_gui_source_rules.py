@@ -93,6 +93,55 @@ def toolkit_imports(source: str) -> list[str]:
     return [n for n in names if any(n == b or n.startswith(f"{b}.") for b in PRESENTER_BANNED)]
 
 
+def _calls_outside(source: str, name: str, home: str | None) -> list[str]:
+    """Calls to `name` made anywhere but inside the function `home` (anywhere, if None)."""
+    found: list[str] = []
+
+    def visit(node: ast.AST, scope: str) -> None:
+        if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
+            scope = node.name
+        if isinstance(node, ast.Call):
+            func = node.func
+            if getattr(func, "id", getattr(func, "attr", "")) == name and scope != home:
+                found.append(f"{scope}: {ast.unparse(node)}")
+        for child in ast.iter_child_nodes(node):
+            visit(child, scope)
+
+    visit(parse(source), "<module>")
+    return found
+
+
+def draws_the_figure_itself(source: str) -> list[str]:
+    return _calls_outside(source, "draw_figure", None)
+
+
+def lays_out_outside_relayout(source: str) -> list[str]:
+    return _calls_outside(source, "compute_layout", "_relayout")
+
+
+def builds_a_scene_outside_build_scene(source: str) -> list[str]:
+    return _calls_outside(source, "StepScene", "_build_scene")
+
+
+def _outside_type_checking(node: ast.AST):
+    for child in ast.iter_child_nodes(node):
+        test = child.test if isinstance(child, ast.If) else None
+        if getattr(test, "id", getattr(test, "attr", "")) == "TYPE_CHECKING":
+            yield from (n for stmt in child.orelse for n in ast.walk(stmt))
+        else:
+            yield child
+            yield from _outside_type_checking(child)
+
+
+def runtime_analysis_import(source: str) -> list[str]:
+    """Imports of eulerase.analysis that run, which the window gets only through the presenter."""
+    names = [n for node in _outside_type_checking(parse(source)) for n in _imported_names(node)]
+    return [n for n in names if n == "eulerase.analysis" or n.startswith("eulerase.analysis.")]
+
+
+ONLY_IN = {runtime_analysis_import: "app.py"}  # the presenter owns the analysis
+
+
 def gui_sources() -> dict[Path, str]:
     assert GUI.is_dir(), f"{GUI} is missing"
     sources = {path: path.read_text(encoding="utf-8") for path in sorted(GUI.glob("*.py"))}
@@ -102,11 +151,24 @@ def gui_sources() -> dict[Path, str]:
 
 @pytest.mark.parametrize(
     "rule",
-    [outside_the_basic_plane, barred_words, colour_literals, root_class_bindings],
+    [
+        outside_the_basic_plane,
+        barred_words,
+        colour_literals,
+        root_class_bindings,
+        draws_the_figure_itself,
+        lays_out_outside_relayout,
+        builds_a_scene_outside_build_scene,
+        runtime_analysis_import,
+    ],
     ids=lambda rule: rule.__name__,
 )
 def test_no_gui_file_breaks_the_rule(rule: Callable[[str], list[str]]):
-    broken = {path.name: found for path, source in gui_sources().items() if (found := rule(source))}
+    broken = {
+        path.name: found
+        for path, source in gui_sources().items()
+        if ONLY_IN.get(rule, path.name) == path.name and (found := rule(source))
+    }
     assert not broken
 
 
@@ -132,6 +194,22 @@ BAD_SOURCES = [
     (toolkit_imports, "import matplotlib.pyplot"),
     (toolkit_imports, 'import importlib\nimportlib.import_module("tkinter")'),
     (toolkit_imports, '__import__("tkinter")'),
+    (draws_the_figure_itself, "def show_step(self):\n    render.draw_figure(self.figure)"),
+    (draws_the_figure_itself, "draw_figure(figure)"),
+    (lays_out_outside_relayout, "def _build_scene(self):\n    render.compute_layout(a, 1.0)"),
+    (builds_a_scene_outside_build_scene, "def show_step(self):\n    render.StepScene(f, a, l)"),
+    (
+        builds_a_scene_outside_build_scene,
+        "def _build_scene(self):\n    def go():\n        StepScene()",
+    ),
+    (runtime_analysis_import, "from eulerase.analysis import TABLES"),
+    (runtime_analysis_import, "from eulerase import analysis"),
+    (runtime_analysis_import, "import eulerase.analysis as a"),
+    (
+        runtime_analysis_import,
+        "from typing import TYPE_CHECKING\nif TYPE_CHECKING:\n    pass\nelse:\n"
+        "    from eulerase.analysis import TABLES",
+    ),
 ]
 GOOD_SOURCES = [
     (outside_the_basic_plane, 'x = "caf\u00e9"'),
@@ -141,6 +219,17 @@ GOOD_SOURCES = [
     (
         toolkit_imports,
         "from eulerase import analysis\nimport importlib\nimportlib.import_module(name)",
+    ),
+    (
+        draws_the_figure_itself,
+        "def show_step(self):\n    self.scene.show(1)\n    self.canvas.draw_idle()",
+    ),
+    (lays_out_outside_relayout, "def _relayout(self):\n    render.compute_layout(a, 1.0)"),
+    (builds_a_scene_outside_build_scene, "def _build_scene(self):\n    render.StepScene(f, a, l)"),
+    (
+        runtime_analysis_import,
+        "from typing import TYPE_CHECKING\nif TYPE_CHECKING:\n    from eulerase.analysis import "
+        "Analysis\nfrom eulerase import render",
     ),
 ]
 

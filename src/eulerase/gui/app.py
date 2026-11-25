@@ -12,7 +12,7 @@ import tkinter.ttk as ttk
 from dataclasses import dataclass
 from pathlib import Path
 
-from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolbar2Tk
 from matplotlib.figure import Figure
 
 from eulerase import render
@@ -39,11 +39,17 @@ CLIP_TIPS_HELP = (
 )
 SIDEBAR_TEXT_WIDTH = 250  # pixels at which the help sentences wrap
 VIEW_BUTTONS = ("Zoom", "Pan", "Reset view")
+STEP_BUTTONS = ("First", "Back", "Play", "Forward", "Last")  # the third reads "Pause" while playing
+STEP_METHODS = ("step_start", "step_back", "toggle_play", "step_forward", "step_end")
 ASSEMBLY = "Assembly"
 WIDTH_ROWS = 50  # rows of a table read to size its columns
 MAX_COLUMN_PX = 320  # a longer cell scrolls instead of widening the table
 CELL_PAD_PX = 16
 TK_KEY_NAMES = {"Ctrl": "Control", "Esc": "Escape", "Enter": "Return"}
+DASH_PATTERNS = {"solid": (), "dashed": (6, 3), "dotted": (2, 3)}  # Tk dash, by line style name
+MIN_CANVAS_PX = 2  # a canvas not yet mapped reports 1
+RESIZE_DELAY_MS = 150  # a drag of the window edge lays out once, after it stops
+ZOOM_IN, ZOOM_OUT = 0.85, 1.18  # one wheel notch, as a factor of the visible range
 
 
 @dataclass(frozen=True)
@@ -116,6 +122,8 @@ class Window:
         self._style()
         self._sidebar()
         self._explorer()
+        self._graph()
+        self._step_controls()
         self._status_bar()
 
     def _style(self) -> None:
@@ -283,6 +291,19 @@ class Window:
         for c in COMMANDS:
             if c.shortcut and c.method != "build":  # Ctrl+Enter is bound on the input box
                 self.root.bind(tk_sequence(c.shortcut), lambda event, c=c: self._key(c))
+        self._bind_graph(presenter)
+
+    def _bind_graph(self, presenter) -> None:
+        """The step controls call the presenter; the view controls and canvas are the window's."""
+        for button, method in zip(self.step_buttons, STEP_METHODS, strict=True):
+            button.configure(command=getattr(presenter, method))
+        self.scale.configure(command=lambda value: presenter.set_step(round(float(value))))
+        self.view_buttons["Zoom"].configure(command=self.toolbar.zoom)
+        self.view_buttons["Pan"].configure(command=self.toolbar.pan)
+        self.view_buttons["Reset view"].configure(command=self._reset_view)
+        self.canvas_widget.bind("<Configure>", self._on_configure, add="+")  # keep matplotlib's
+        self.canvas.mpl_connect("scroll_event", self._on_scroll)
+        self.canvas.mpl_connect("motion_notify_event", self._on_motion)
 
     def _menu_bar(self) -> None:
         bar = tkinter.Menu(self.root)
@@ -381,6 +402,7 @@ class Window:
         render.save_figure(analysis, path)  # EuleraseError or OSError: the presenter shows both
 
     def show_result(self, result: ResultView) -> None:
+        self._show_graph(result)
         if self.notebook is None:
             self._make_tabs(result.tables)
         for table in result.tables:
@@ -390,6 +412,7 @@ class Window:
         self.spectrum_canvas.draw_idle()
 
     def clear_result(self) -> None:
+        self._clear_graph()
         if self.notebook is None:
             return
         for name, tree in self.trees.items():
@@ -502,3 +525,156 @@ class Window:
         else:
             self.progress.stop()
             self.progress.pack_forget()
+
+    def _graph(self) -> None:
+        """The canvas of the plot, in the frame `_explorer` made; empty until a result."""
+        self.figure = Figure(facecolor=render.SURFACE)
+        self.canvas = FigureCanvasTkAgg(self.figure, master=self.canvas_frame)
+        self.canvas_widget = self.canvas.get_tk_widget()
+        self.canvas_widget.configure(width=200, height=150)  # small: it follows the space it gets
+        self.canvas_widget.pack(fill="both", expand=True)
+        # Not shown: it supplies the zoom and pan modes; exports go through the File menu.
+        self.toolbar = NavigationToolbar2Tk(self.canvas, self.canvas_frame, pack_toolbar=False)
+        self.left_out_label = ttk.Label(self.strip, style="Muted.TLabel")
+        self.left_out_label.pack(side="left", padx=(12, 0))
+        self.scene = None
+        self.analysis = None
+        self._step = 0
+        self._home = None  # the whole graph's limits, for Reset view
+        self._hovered = None
+        self._overview = False
+        self._resize_job = None
+
+    def _step_controls(self) -> None:
+        self.step_buttons = [ttk.Button(self.steps_frame, text=t) for t in STEP_BUTTONS]
+        self.scale = ttk.Scale(self.steps_frame, from_=0, to=0, orient="horizontal")
+        self.step_label = ttk.Label(self.steps_frame, width=14)
+        first, back, play, forward, last = self.step_buttons
+        for widget in (first, back, play, self.scale, forward, last, self.step_label):
+            expand = widget is self.scale
+            widget.pack(side="left", fill="x" if expand else "none", expand=expand, padx=2)
+        self._show_step_label(0, 0)
+
+    def _set_graph_controls(self, enabled: bool) -> None:
+        state = "!disabled" if enabled else "disabled"
+        for widget in self.view_buttons.values():
+            widget.state([state])
+
+    def _show_step_label(self, step: int, total: int) -> None:
+        self.step_label.configure(text=f"step {step} / {total}")
+
+    def _measure_aspect(self) -> float:
+        """The canvas's width over its height now; sets nothing."""
+        self.root.update_idletasks()
+        width, height = self.canvas_widget.winfo_width(), self.canvas_widget.winfo_height()
+        if width < MIN_CANVAS_PX or height < MIN_CANVAS_PX:
+            return render.FIGURE_ASPECT
+        return width / height
+
+    def canvas_aspect(self) -> float:
+        """Read for a build; the result is laid out again for the canvas as it is then."""
+        return self._measure_aspect()
+
+    def show_step(self, step: int, total: int) -> None:
+        self._step = step
+        self._show_step_label(step, total)
+        self.scale.set(step)
+        self.scene.show(step)
+        self.canvas.draw_idle()
+
+    def set_playing(self, playing: bool) -> None:
+        self.step_buttons[2].configure(text="Pause" if playing else "Play")
+
+    def _show_graph(self, result: ResultView) -> None:
+        self.analysis = result.analysis
+        self.headline.configure(text=result.headline)
+        self.scale.configure(to=result.steps)
+        if result.layout is None:
+            self._build_scene(None)  # past the drawing limit: the canvas holds only the text
+        else:
+            self._relayout()  # the worker's layout may be for another canvas shape
+        for entry in render.legend_entries(result.analysis):
+            self._legend_sample(entry)
+        self._set_graph_controls(True)
+
+    def _legend_sample(self, entry) -> None:
+        sample = ttk.Frame(self.legend_frame)
+        sample.pack(side="left", padx=(0, 12))
+        line = tkinter.Canvas(
+            sample, width=34, height=12, highlightthickness=0, background=render.WINDOW
+        )
+        dash = DASH_PATTERNS[entry.dash] or None  # None leaves the option out: a solid line
+        line.create_line(1, 6, 33, 6, width=2, fill=entry.color, dash=dash)
+        line.pack(side="left")
+        ttk.Label(sample, text=entry.label).pack(side="left", padx=(4, 0))
+
+    def _build_scene(self, layout) -> None:
+        """A new scene at the current step. A new layout starts a new home view."""
+        self.scene = render.StepScene(self.figure, self.analysis, layout)
+        self.scene.show(self._step)
+        axes = self.figure.axes[0]
+        self._home = (axes.get_xlim(), axes.get_ylim())
+        self.toolbar.update()  # forgets the zoom and pan history of the old axes
+        self._overview = len(self.analysis.nodes) > render.OVERVIEW_ABOVE_NODES
+        self._hovered = None
+        shortened, left_out = self.scene.left_out
+        text = f"{shortened} labels shortened, {left_out} left out" if shortened or left_out else ""
+        self.left_out_label.configure(text=text)
+        self.canvas.draw_idle()
+
+    def _relayout(self) -> None:
+        """The one place the window lays out: for the canvas as it is now."""
+        self._build_scene(render.compute_layout(self.analysis, self._measure_aspect()))
+
+    def _on_configure(self, event) -> None:
+        if self._resize_job is not None:
+            self.root.after_cancel(self._resize_job)
+        self._resize_job = self.root.after(RESIZE_DELAY_MS, self._resized)
+
+    def _resized(self) -> None:
+        self._resize_job = None
+        if self.scene is not None:
+            self._relayout()
+
+    def _clear_graph(self) -> None:
+        self.scene = self.analysis = self._home = None
+        self._step = 0
+        self.figure.clear()
+        self.canvas.draw_idle()
+        self.headline.configure(text="")
+        self.left_out_label.configure(text="")
+        for child in self.legend_frame.winfo_children():
+            child.destroy()
+        self.scale.configure(to=0)
+        self._show_step_label(0, 0)
+        self._set_graph_controls(False)
+
+    def _on_motion(self, event) -> None:
+        if self.scene is None or not self._overview:
+            return
+        node = self.scene.node_at(event.x, event.y)
+        if node != self._hovered:
+            self._hovered = node
+            self.scene.show_hover(node)
+            self.canvas.draw_idle()
+
+    def _on_scroll(self, event) -> None:
+        self._zoom(ZOOM_IN if event.button == "up" else ZOOM_OUT)
+
+    def _zoom(self, factor: float) -> None:
+        """Scale the visible range about its centre."""
+        if self.scene is None:
+            return
+        axes = self.figure.axes[0]
+        (x0, x1), (y0, y1) = axes.get_xlim(), axes.get_ylim()
+        cx, cy, half_w, half_h = (x0 + x1) / 2, (y0 + y1) / 2, (x1 - x0) / 2, (y1 - y0) / 2
+        axes.set_xlim(cx - half_w * factor, cx + half_w * factor)
+        axes.set_ylim(cy - half_h * factor, cy + half_h * factor)
+        self.canvas.draw_idle()
+
+    def _reset_view(self) -> None:
+        axes = self.figure.axes[0]
+        axes.set_xlim(self._home[0])
+        axes.set_ylim(self._home[1])
+        self.toolbar.update()
+        self.canvas.draw_idle()
