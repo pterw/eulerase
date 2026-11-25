@@ -3,7 +3,15 @@
 import dataclasses
 
 import pytest
-from figure_probe import INPUTS, SAVED_SIZE, SMALL_SIZE, drawn, elements, extent, inside, overlap
+from figure_probe import (
+    INPUTS,
+    SAVED_SIZE,
+    SMALL_SIZE,
+    collisions,
+    drawn,
+    elements,
+    positions,
+)
 from genomes import random_dna
 from matplotlib.backends.backend_agg import FigureCanvasAgg
 from matplotlib.colors import to_rgb
@@ -15,40 +23,6 @@ from eulerase.analysis import Settings, analyze
 from eulerase.sequence import Record
 
 SIZES = {"saved": SAVED_SIZE, "small": SMALL_SIZE}
-
-
-def _texts(fig):
-    """The visible labels and words of the plot, by gid."""
-    return {
-        artist.get_gid(): artist
-        for role in ("label", "word")
-        for artist in elements(fig, role)
-        if artist.get_visible()
-    }
-
-
-def collisions(fig):
-    """The defects of the texts of a figure: one on a node, on another text, or outside."""
-    boxes = {gid: extent(fig, artist) for gid, artist in _texts(fig).items()}
-    discs = {disc.get_gid(): extent(fig, disc) for disc in elements(fig, "node")}
-    found = []
-    for gid, box in boxes.items():
-        found += [(gid, node) for node, disc in discs.items() if overlap(box, disc)]
-        if not inside(box, fig):
-            found.append((gid, "outside"))
-    gids = sorted(boxes)
-    for i, first in enumerate(gids):
-        found += [(first, g) for g in gids[i + 1 :] if overlap(boxes[first], boxes[g])]
-    return found
-
-
-def positions(fig):
-    """The position and visibility of every label and word, by gid."""
-    return {
-        artist.get_gid(): (artist.get_position(), artist.get_visible())
-        for role in ("label", "word")
-        for artist in elements(fig, role)
-    }
 
 
 def moves(first, second):

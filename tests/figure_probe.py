@@ -122,3 +122,37 @@ def visible_texts(fig):
     return [
         t for t in fig.findobj(Text) if t.get_visible() and t.get_text().strip() and t not in own
     ]
+
+
+def _texts(fig):
+    """The visible labels and words of the plot, by gid."""
+    return {
+        artist.get_gid(): artist
+        for role in ("label", "word")
+        for artist in elements(fig, role)
+        if artist.get_visible()
+    }
+
+
+def collisions(fig):
+    """The defects of the texts of a figure: one on a node, on another text, or outside."""
+    boxes = {gid: extent(fig, artist) for gid, artist in _texts(fig).items()}
+    discs = {disc.get_gid(): extent(fig, disc) for disc in elements(fig, "node")}
+    found = []
+    for gid, box in boxes.items():
+        found += [(gid, node) for node, disc in discs.items() if overlap(box, disc)]
+        if not inside(box, fig):
+            found.append((gid, "outside"))
+    gids = sorted(boxes)
+    for i, first in enumerate(gids):
+        found += [(first, g) for g in gids[i + 1 :] if overlap(boxes[first], boxes[g])]
+    return found
+
+
+def positions(fig):
+    """The position and visibility of every label and word, by gid."""
+    return {
+        artist.get_gid(): (artist.get_position(), artist.get_visible())
+        for role in ("label", "word")
+        for artist in elements(fig, role)
+    }

@@ -139,24 +139,28 @@ def test_above_the_copy_limit_the_marks_become_a_count(copies):
 
 
 @pytest.mark.parametrize("copies", (render.MAX_COPY_MARKS, 100))
-def test_the_marks_and_the_count_stay_inside_their_labels_slot(copies):
+def test_the_marks_and_the_count_stay_inside_their_labels_slot(copies, monkeypatch):
     # a two-letter k-mer has a narrow label: its marks at full pitch, or its count at full size,
     # would be wider than the slot the label reserved, so they must shrink to fit
+    reserved = []
+    place = render.place_labels
+    monkeypatch.setattr(
+        render, "place_labels", lambda *args: reserved.append(place(*args)) or reserved[-1]
+    )
     a = analyze([Record("r", "AB" * copies)], Settings(k=2))
     fig, _ = drawn(a, SMALL_SIZE)
-    labels = _by_gid(fig, "label")
+    (placement,) = reserved
+    axes = fig.axes[0]
     to_px = fig.dpi / 72
+    scale = axes.get_window_extent().height / to_px  # the plot's height in points
+    slots = {}
+    for key, placed in placement.placed.items():
+        low, high = (axes.transData.transform((x / scale, 0))[0] for x in placed.box[::2])
+        slots[key.removeprefix("label:")] = (low, high)
     inked = elements(fig, "mark") + elements(fig, "count")
     assert {artist.get_gid().split(":")[0] for artist in inked} == {
         "mark" if copies <= render.MAX_COPY_MARKS else "count"
     }
-    slots = {}
-    for key, label in labels.items():
-        box = extent(fig, label)
-        slots[key.removeprefix("label:")] = (
-            box[0] - render.LABEL_PAD * to_px,
-            box[2] + render.LABEL_PAD * to_px,
-        )
     first, last = slots["1:AB"]
     if copies <= render.MAX_COPY_MARKS:
         unshrunk = copies * render.MARK_PITCH * to_px

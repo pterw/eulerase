@@ -4,14 +4,24 @@ import math
 import re
 
 import pytest
-from figure_probe import INPUTS, SAVED_SIZE, SMALL_SIZE, drawn, elements, extent, frame, inside
+from figure_probe import (
+    INPUTS,
+    SAVED_SIZE,
+    SMALL_SIZE,
+    collisions,
+    drawn,
+    elements,
+    extent,
+    frame,
+    inside,
+    positions,
+)
 from genomes import random_dna
 from matplotlib.backends.backend_agg import FigureCanvasAgg
 from matplotlib.colors import to_rgba
 from matplotlib.figure import Figure
 from matplotlib.patches import FancyArrowPatch, Patch
 from matplotlib.text import Text
-from test_render_layout_rules import collisions, positions
 
 from eulerase import render
 from eulerase.analysis import Settings, analyze
@@ -266,7 +276,11 @@ def _within(discs, point):
 
 
 def _node_at_defects(scene, points, expected):
-    return [p for p, node in zip(points, expected) if scene.node_at(*p) != node]
+    return [
+        (p, node, scene.node_at(*p))
+        for p, node in zip(points, expected)
+        if scene.node_at(*p) != node
+    ]
 
 
 def _probe(name, resized=False):
