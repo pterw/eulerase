@@ -1,7 +1,7 @@
 """The analysis of one input: walk-graph trails, nodes, contigs, metrics, spectrum, ORFs."""
 
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from eulerase import assembly, graph, kmers, orfs
 from eulerase.assembly import Contig, Metrics
@@ -328,6 +328,9 @@ def analyze(records: Sequence[Record], settings: Settings) -> Analysis:
     # DNA is decided by the non-empty records: an empty record has no letters to be wrong
     letters = sorted({ch for r in records for ch in r.sequence.upper()} - set("ACGTN"))
     dna = not letters
+    if not dna:  # GC is not available: no number may sit beside the note that says so
+        contigs = tuple(replace(c, gc=None) for c in contigs)
+        metrics = replace(metrics, gc=None)
     return Analysis(
         settings=settings,
         k=k,

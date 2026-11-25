@@ -147,6 +147,16 @@ def test_non_dna_gives_not_available_not_empty():
     assert mixed.orfs is None
     with pytest.raises(EuleraseError):
         analyze(_records("LEMONLEMONADE"), Settings(k=3, both_strands=True))
+    # the DNA record alone has a GC value, so a None below cannot come from a default
+    dna_only = analyze(_records("ACGTACGTAC"), Settings(k=3))
+    assert isinstance(dna_only.metrics.gc, float)
+    assert isinstance(dna_only.contigs[0].gc, float)
+    # a short non-DNA record: the contigs come from the DNA record, yet GC is not available
+    short_x = analyze(_records("ACGTACGTAC", "XY"), Settings(k=3))
+    assert short_x.dna is False
+    assert short_x.contigs
+    assert short_x.metrics.gc is None
+    assert all(c.gc is None for c in short_x.contigs)
 
 
 def test_dna_is_decided_by_the_non_empty_records():
