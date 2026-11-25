@@ -150,18 +150,23 @@ def test_every_shortcut_in_the_table_has_a_tested_sequence():
     assert {c.shortcut for c in app.COMMANDS if c.shortcut} == set(TK_SEQUENCES)
 
 
-@pytest.mark.parametrize("existing", [[], ["/out/a.csv"]])
-def test_confirm_export_always_asks_and_names_the_files_that_exist(existing, monkeypatch):
+@pytest.mark.parametrize("answer", [False, True])
+@pytest.mark.parametrize("existing", [[], ["/out/b.csv", "/out/a.csv"]])
+def test_confirm_export_always_asks_and_names_the_files_that_exist(existing, answer, monkeypatch):
     asked = []
 
     def recorder(title, message, **options):
         asked.append(message)
-        return False
+        return answer
 
     monkeypatch.setattr(app.tkinter.messagebox, "askyesno", recorder)
     paths = ["/out/a.csv", "/out/b.csv"]
+    assert existing != paths  # the replaced section is a different list from the written one
     window = type("W", (), {"root": object()})()
-    assert app.Window.confirm_export(window, paths, existing) is False
+
+    assert app.Window.confirm_export(window, paths, existing) is answer
+
     (message,) = asked
-    assert all(path in message for path in paths)
-    assert message.count("/out/a.csv") == 1 + len(existing)
+    written, _, replaced = message.partition("\n\n")
+    assert written.splitlines()[1:] == paths
+    assert replaced.splitlines()[1:] == existing  # the heading's wording is not pinned

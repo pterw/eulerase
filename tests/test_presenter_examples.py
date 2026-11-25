@@ -28,6 +28,7 @@ EXPECTED = {
 NAMES = list(EXPECTED)
 
 # name: a fact about the built result that is independent of how the example is written.
+# Only four examples have a row here; the others are checked only to build and be ready.
 FACTS = {
     NAMES[0]: lambda a: a.headline.startswith("Eulerian path"),
     NAMES[3]: lambda a: len(a.trails) == 2,
@@ -60,7 +61,7 @@ def test_the_examples_are_the_eight_of_the_spec_in_order():
 
 
 @pytest.mark.parametrize("name", NAMES)
-def test_an_example_builds_and_shows_what_its_name_says(name):
+def test_an_example_builds_and_its_stated_fact_holds(name):
     view, presenter = built(name)
     assert (presenter.phase, view.status_is_error) == (READY, False)
     assert FACTS.get(name, lambda analysis: True)(presenter.analysis)

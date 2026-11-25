@@ -11,7 +11,7 @@ K = 5
 
 def big_form(length: int, both_strands: bool = False) -> FormValues:
     """One sequence of `length` letters: it holds `length - 4` 5-mers on one strand."""
-    text = ("ACGT" * length)[:length]
+    text = ("ACGT" * (length // 4 + 1))[:length]
     return FormValues(text, "sequences", str(K), both_strands, False, "", False)
 
 
@@ -32,18 +32,22 @@ def confirms(view):
 
 
 @pytest.mark.parametrize(
-    ("length", "both_strands", "kmer_count", "asks"),
+    ("length", "both_strands", "kmer_count", "asks", "limit"),
     [
-        (54, False, 50, False),  # equal to the threshold: no question
-        (55, False, 51, True),  # one above it: asks
-        (29, True, 50, False),  # 25 k-mers, counted twice, equal to the threshold
-        (30, True, 52, True),  # 26 k-mers, counted twice, above it
-        (1004, False, 1000, True),  # the question names the estimate, thousands separated
+        (54, False, 50, False, None),  # equal to the threshold: no question
+        (55, False, 51, True, None),  # one above it: asks
+        (29, True, 50, False, None),  # 25 k-mers, counted twice, equal to the threshold
+        (30, True, 52, True, None),  # 26 k-mers, counted twice, above it
+        (1004, False, 1000, True, None),  # the question names the estimate, thousands separated
+        (55, False, 51, True, 51),  # equal to the core limit: still asked, then built
     ],
 )
 def test_a_build_asks_only_above_the_threshold_counting_both_strands_twice(
-    length, both_strands, kmer_count, asks
+    length, both_strands, kmer_count, asks, limit, monkeypatch
 ):
+    if limit:
+        monkeypatch.setattr("eulerase.kmers.MAX_KMERS", limit)
+        assert limit == kmer_count  # exactly at the limit, not below it
     view, worker, _, presenter = rig()
     view.form = big_form(length, both_strands)
     # By hand: (length - K + 1) k-mers on a strand, doubled with both strands.
@@ -83,17 +87,6 @@ def test_declining_leaves_the_screen_the_build_and_the_walk_as_they_were(state):
     if state == "build running":  # not abandoned: its outcome still arrives
         worker.finish(0, presenter)
         assert (presenter.phase, view.result is not None) == (READY, True)
-
-
-def test_an_input_exactly_at_the_core_limit_is_still_confirmed(monkeypatch):
-    monkeypatch.setattr("eulerase.kmers.MAX_KMERS", 51)
-    view, worker, _, presenter = rig()
-    view.form = big_form(55)  # 51 k-mers: above the threshold, equal to the limit
-
-    presenter.build()
-
-    assert len(confirms(view)) == 1
-    assert (len(worker.jobs), presenter.phase) == (1, BUSY)
 
 
 def test_an_input_above_the_core_limit_is_refused_not_confirmed(monkeypatch):
