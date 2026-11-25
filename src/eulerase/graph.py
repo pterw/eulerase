@@ -28,11 +28,6 @@ def build_walk_graph(items: Sequence[str]) -> nx.MultiDiGraph:
     return g
 
 
-def node_balance(g: nx.MultiDiGraph) -> dict[str, int]:
-    """Out-degree minus in-degree of every node."""
-    return {n: g.out_degree(n) - g.in_degree(n) for n in g}
-
-
 def _hierholzer(adj, start):
     """Iterative Hierholzer on adjacency lists of (v, key, is_dummy)."""
     stack = [(start, None)]

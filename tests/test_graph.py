@@ -138,15 +138,6 @@ def test_oracle_rejects_a_missing_edge_and_a_split_trail(fault):
     assert trail_errors(items, wrong) != []
 
 
-def test_node_balance_matches_degree_difference():
-    seqs = ["ATGCATGCA", "GGGAC", "TTTT"]
-    items = brute_kmers(seqs, 3, both=True)
-    expected = _balances(items)
-    got = graph.node_balance(graph.build_walk_graph(items))
-    assert got == {n: expected.get(n, 0) for n in got}
-    assert set(got) == {km[:-1] for km in items} | {km[1:] for km in items}
-
-
 def _items(sequence: str, k: int, *, times: int = 1, unique: bool = False) -> tuple[str, ...]:
     records = [Record(f"r{i}", sequence) for i in range(times)]
     return kmers.from_sequences(records, k, both_strands=False, unique=unique).items

@@ -84,7 +84,6 @@ class Analysis:
     total_kmers: int
     distinct_kmers: int
     short_records: int
-    duplicates_dropped: int
     headline: str
     trails: tuple[tuple[Step, ...], ...]
     spelled: tuple[str, ...]
@@ -338,7 +337,6 @@ def analyze(records: Sequence[Record], settings: Settings) -> Analysis:
         total_kmers=len(found.items),
         distinct_kmers=len(counts),
         short_records=found.short_records,
-        duplicates_dropped=found.duplicates_dropped,
         headline=_headline(g, trails),
         trails=_steps(g, trails, counts),
         spelled=tuple(graph.spell(t) for t in trails),
