@@ -22,7 +22,7 @@ from eulerase.sequence import Record, parse_records
 _GZIP_MAGIC = b"\x1f\x8b"
 _UTF16_MARKS = (b"\xff\xfe", b"\xfe\xff")
 _BOM = "\ufeff"
-_FIRST_LINE_FORMATS = (("LOCUS", "genbank"), ("ID ", "embl"), (">", "fasta"), ("@", "fastq"))
+_FIRST_LINE_FORMATS = (("LOCUS ", "genbank"), ("ID ", "embl"), (">", "fasta"), ("@", "fastq"))
 
 
 def _text_of(data: bytes) -> str:

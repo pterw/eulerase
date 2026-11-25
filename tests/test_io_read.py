@@ -121,6 +121,7 @@ assert _UTF16_LE != _UTF16_BE
         pytest.param("a.fa", _UTF16_BE, _FA_SEQS, id="utf16-be"),
         pytest.param("a.fa", gzip.compress(_UTF16_LE), _FA_SEQS, id="utf16-le-gz"),
         pytest.param("a.fa", _UTF16_LE + b"\x00", None, id="utf16-odd-length"),
+        pytest.param("a.txt", b"LOCUST\nACGT\n", ["LOCUST", "ACGT"], id="locust-lines"),
     ],
 )
 def test_format_is_detected_from_content(tmp_path, name, data, expected):
@@ -140,6 +141,7 @@ def test_format_is_detected_from_content(tmp_path, name, data, expected):
         (b"@q\nACGT\n+\nIIII\n", "fastq"),
         (b"LOCUS       X1   4 bp    DNA\nORIGIN\n", "genbank"),
         (b"ID   X1; SV 1; linear; DNA; STD; UNC; 4 BP.\n", "embl"),
+        (b"LOCUST\n", "bare"),
         (b"ACGT\nGGTT\n", "bare"),
         (b"acgt\n", "bare"),
         (b"\xef\xbb\xbf>r1\nACGT\n", "fasta"),
@@ -152,6 +154,7 @@ def test_format_is_detected_from_content(tmp_path, name, data, expected):
         "fastq",
         "genbank",
         "embl",
+        "locust-is-bare",
         "bare",
         "bare-lower-case",
         "bom",
