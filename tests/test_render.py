@@ -77,6 +77,27 @@ def test_figure_title_carries_the_settings():
     assert any(settings_text(settings) in t.get_text() for t in fig.texts)
 
 
+def test_letters_with_a_dollar_are_drawn_as_typed_and_save(tmp_path):
+    # the k-mers "$^$" and "^$^" hold two unescaped dollars: read as a formula, matplotlib fails
+    a = _analysis("$^$^$^", k=3)
+    assert any("$" in node.node for node in a.nodes)
+    fig, _ = drawn(a)
+    letters = elements(fig, "letters") + elements(fig, "label")
+    assert any("$" in t.get_text() for t in letters)
+    assert all(not t.get_parse_math() for t in letters)
+
+    save_figure(a, tmp_path / "f.svg")
+    assert (tmp_path / "f.svg").stat().st_size > 0
+    scene_fig = Figure(figsize=SMALL_SIZE)
+    FigureCanvasAgg(scene_fig)
+    scene = render.StepScene(scene_fig, a, compute_layout(a))
+    node = next(row.node for row in a.nodes if "$" in row.node)
+    scene.show_hover(node)
+    (hover,) = elements(scene_fig, "hover")
+    assert "$" in hover.get_text() and not hover.get_parse_math()
+    scene_fig.canvas.draw()
+
+
 def test_layout_is_none_above_the_drawing_limit_and_the_figure_says_why():
     a = _analysis(random_dna(1500, seed=1), k=7)
     assert len(a.nodes) > MAX_DRAW_NODES

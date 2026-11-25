@@ -543,6 +543,7 @@ def _add_node(ax, node: str, centre: Point, sizes: _Sizes, overview: bool) -> Ci
             color=INK,
             zorder=6,
             gid=f"letters:{node}",
+            parse_math=False,
         )
     return disc
 
@@ -575,6 +576,7 @@ def _add_text(ax, key: str, placed: Placed, scale: float) -> Text:
         color=INK,
         zorder=5,
         gid=key,
+        parse_math=False,
         bbox=None
         if is_word
         else dict(boxstyle="round,pad=0.15", facecolor=SURFACE, edgecolor="none", alpha=0.85),
@@ -897,6 +899,7 @@ class StepScene:
             zorder=7,
             visible=False,
             gid="hover",
+            parse_math=False,
             bbox=dict(boxstyle="round,pad=0.3", facecolor=SURFACE, edgecolor=RULE),
         )
 
