@@ -174,6 +174,11 @@ class Worker(Protocol):
         Presenter.on_build_outcome on the window's thread."""
         ...
 
+    def start_process(self, token: int, function: Callable[..., BuildOutcome], args: tuple) -> None:
+        """Run `function(token, *args)` in a process of its own, for a build too large to share
+        the window's interpreter; its outcome goes to the same place as a thread job's."""
+        ...
+
 
 class Scheduler(Protocol):
     def after(self, delay_ms: int, callback: Callable[[], None]) -> object: ...
@@ -280,6 +285,25 @@ def run_in_process(connection, job_in, function: Callable[..., BuildOutcome], to
     connection.close()
 
 
+def run_build(
+    token: int,
+    records: list[Record],
+    settings: Settings,
+    aspect: float,
+    layout: Callable[[Analysis, float], object],
+) -> BuildOutcome:
+    """The build itself, off the window's thread: the same in a thread and in a process, so the
+    two cannot differ. Module-level, with plain arguments, so a spawned process can take it."""
+    try:
+        a = analysis.analyze(records, settings)
+        return BuildOutcome(token, a, layout(a, aspect), None)
+    except EuleraseError as error:
+        return BuildOutcome(token, None, None, str(error))
+    except Exception as error:  # the busy state must always end
+        message = f"The build failed with a {type(error).__name__}: this is a bug in Eulerase."
+        return BuildOutcome(token, None, None, message)
+
+
 def _records(form: FormValues) -> list[Record]:
     parse = sequence.parse_kmer_list if form.input_mode == "kmers" else sequence.parse_records
     return parse(form.text)
@@ -362,7 +386,17 @@ class Presenter:
         except EuleraseError as error:
             self._fail(str(error))
             return
-        if not self._confirmed(records, settings):
+        # Above the core's limit the core refuses, so no question and no process.
+        count = estimate_kmers(
+            records,
+            settings.k,
+            both_strands=settings.both_strands,
+            input_mode=settings.input_mode,
+        )
+        large = CONFIRM_ABOVE_KMERS < count <= kmers.MAX_KMERS
+        if large and not self._view.confirm(
+            f"This build makes {count:,} k-mers and may take a while. Build anyway?"
+        ):
             self._view.show_status("Build cancelled; nothing was changed.")
             return
         self.pause()
@@ -371,21 +405,13 @@ class Presenter:
         self._phase = BUSY
         self._view.show_busy(True)
         self._view.show_status("Building...")  # the last result's line is no longer true
-        self._worker.start(self._job(records, settings, aspect, self._token))
-
-    def _confirmed(self, records: Sequence[Record], settings: Settings) -> bool:
-        """Ask once about a large build; above the core's limit the core refuses, so no question."""
-        count = estimate_kmers(
-            records,
-            settings.k,
-            both_strands=settings.both_strands,
-            input_mode=settings.input_mode,
-        )
-        if not CONFIRM_ABOVE_KMERS < count <= kmers.MAX_KMERS:
-            return True
-        return self._view.confirm(
-            f"This build makes {count:,} k-mers and may take a while. Build anyway?"
-        )
+        # a build that long would starve the window of the interpreter, so it gets its own
+        if large:
+            self._worker.start_process(
+                self._token, run_build, (records, settings, aspect, self._layout)
+            )
+        else:
+            self._worker.start(self._job(records, settings, aspect, self._token))
 
     def stop(self) -> None:
         # No tick to cancel: BUSY is entered only by build(), which pauses, and play() does
@@ -481,21 +507,7 @@ class Presenter:
     def _job(
         self, records: list[Record], settings: Settings, aspect: float, token: int
     ) -> Callable[[], BuildOutcome]:
-        layout = self._layout
-
-        def job() -> BuildOutcome:
-            try:
-                a = analysis.analyze(records, settings)
-                return BuildOutcome(token, a, layout(a, aspect), None)
-            except EuleraseError as error:
-                return BuildOutcome(token, None, None, str(error))
-            except Exception as error:  # the busy state must always end
-                message = (
-                    f"The build failed with a {type(error).__name__}: this is a bug in Eulerase."
-                )
-                return BuildOutcome(token, None, None, message)
-
-        return job
+        return lambda: run_build(token, records, settings, aspect, self._layout)
 
     def set_step(self, n: int) -> None:
         n = max(0, min(n, self._total))

@@ -1,9 +1,20 @@
-"""The confirmation before a large build: asked once, in the stated range; a no changes nothing."""
+"""The confirmation before a large build: asked once, in the stated range; a no changes nothing.
+A build the question covers runs in a process, any other in the thread."""
+
+import pickle
 
 import pytest
 from gui_fakes import SHORT_READ, FakeScheduler, FakeView, FakeWorker
 
-from eulerase.gui.presenter import BUSY, EMPTY, READY, FormValues, Presenter
+from eulerase import analysis, render, sequence
+from eulerase.gui.presenter import (
+    BUSY,
+    EMPTY,
+    READY,
+    FormValues,
+    Presenter,
+    run_build,
+)
 
 THRESHOLD = 50
 K = 5
@@ -24,7 +35,7 @@ def rig():
     view = FakeView(SHORT_READ)
     scheduler = FakeScheduler()
     worker = FakeWorker(view.calls)
-    return view, worker, scheduler, Presenter(view, worker, scheduler)
+    return view, worker, scheduler, Presenter(view, worker, scheduler, layout=render.compute_layout)
 
 
 def confirms(view):
@@ -59,7 +70,28 @@ def test_a_build_asks_only_above_the_threshold_counting_both_strands_twice(
     assert len(confirms(view)) == int(asks)
     if asks:
         assert f"{kmer_count:,}" in confirms(view)[0][1]
-    assert (len(worker.jobs), presenter.phase) == (1, BUSY)
+    # a build the question covers goes to a process, every other to the thread
+    assert (len(worker.jobs), len(worker.processes), presenter.phase) == (
+        (0, 1, BUSY) if asks else (1, 0, BUSY)
+    )
+
+
+def test_a_large_build_hands_its_process_a_picklable_run_build_giving_the_threads_outcome():
+    view, worker, _, presenter = rig()
+    view.form = big_form(55)
+    presenter.build()
+    ((token, function, args),) = worker.processes
+    pickle.dumps(args)  # a closure, or the default lambda layout, would not pickle
+    assert function is run_build
+
+    outcome = function(token, *args)
+
+    records = sequence.parse_records(view.form.text)
+    expected = analysis.analyze(records, analysis.Settings(k=K))
+    assert (outcome.analysis, outcome.error) == (expected, None)
+    assert outcome.layout == render.compute_layout(outcome.analysis, view.aspect)
+    presenter.on_build_outcome(outcome)
+    assert presenter.phase == READY, "the token is the one the build took"
 
 
 @pytest.mark.parametrize("state", ["walk playing", "build running"])
@@ -74,7 +106,7 @@ def test_declining_leaves_the_screen_the_build_and_the_walk_as_they_were(state):
     view.confirm_answer = False
     before = (presenter.phase, presenter.analysis, view.result, dict(scheduler.pending))
     assert len(scheduler.pending) == (1 if state == "walk playing" else 0)
-    mark, jobs = len(view.calls), len(worker.jobs)
+    mark, jobs, processes = len(view.calls), len(worker.jobs), len(worker.processes)
 
     presenter.build()
 
@@ -82,7 +114,7 @@ def test_declining_leaves_the_screen_the_build_and_the_walk_as_they_were(state):
     assert names == ["read_form", "canvas_aspect", "confirm", "show_status"]
     assert view.status_is_error is False
     assert (presenter.phase, presenter.analysis, view.result, scheduler.pending) == before
-    assert len(worker.jobs) == jobs
+    assert (len(worker.jobs), len(worker.processes)) == (jobs, processes)
     assert presenter.playing == (state == "walk playing")
     if state == "build running":  # not abandoned: its outcome still arrives
         worker.finish(0, presenter)
@@ -95,6 +127,7 @@ def test_an_input_above_the_core_limit_is_refused_not_confirmed(monkeypatch):
     view.form = big_form(30, True)  # 52 k-mers: above the threshold and the limit
 
     presenter.build()
+    assert (len(worker.jobs), len(worker.processes)) == (1, 0)  # the thread way, as before
     worker.finish(0, presenter)
 
     assert confirms(view) == []
