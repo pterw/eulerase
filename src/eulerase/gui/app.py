@@ -659,17 +659,14 @@ class Window:
     def _show_step_label(self, step: int, total: int) -> None:
         self.step_label.configure(text=_step_text(step, total))
 
-    def _measure_aspect(self) -> float:
-        """The canvas's width over its height now; sets nothing."""
+    def canvas_aspect(self) -> float:
+        """The canvas's width over its height now; sets nothing. A build reads it, then the
+        result is laid out again for the canvas as it is then."""
         self.root.update_idletasks()
         width, height = self.canvas_widget.winfo_width(), self.canvas_widget.winfo_height()
         if width < MIN_CANVAS_PX or height < MIN_CANVAS_PX:
             return render.FIGURE_ASPECT
         return width / height
-
-    def canvas_aspect(self) -> float:
-        """Read for a build; the result is laid out again for the canvas as it is then."""
-        return self._measure_aspect()
 
     def show_step(self, step: int, total: int) -> None:
         self._step = step
@@ -735,7 +732,7 @@ class Window:
 
     def _relayout(self) -> None:
         """The one place the window lays out: for the canvas as it is now."""
-        self._build_scene(render.compute_layout(self.analysis, self._measure_aspect()))
+        self._build_scene(render.compute_layout(self.analysis, self.canvas_aspect()))
 
     def _on_configure(self, event) -> None:
         if self._resize_job is not None:
