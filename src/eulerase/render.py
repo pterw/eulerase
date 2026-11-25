@@ -836,6 +836,9 @@ def draw_figure(
     _draw_left_out(fig, plot, footer)
 
 
+SPECTRUM_HEADROOM = 0.2  # of the tallest bar's height, added above it when a minimum is marked
+
+
 def draw_spectrum(fig: Figure, a: Analysis) -> None:
     """Draw the k-mer spectrum: one bar per multiplicity, the minimum multiplicity marked.
 
@@ -857,13 +860,18 @@ def draw_spectrum(fig: Figure, a: Analysis) -> None:
             hatch="//" if cut else None,
         )
     if minimum is not None:
-        ax.axvline(minimum - 0.5, color=INK, linewidth=1.5)
+        ax.margins(y=SPECTRUM_HEADROOM)  # room above the tallest bar for the label
+        line = minimum - 0.5
+        ax.axvline(line, color=INK, linewidth=1.5)
+        # the label lies along the top, on the side of the line that has more room, so it stays
+        # inside the plot and clear of the y tick labels
+        right = line < sum(ax.get_xlim()) / 2
         ax.text(
-            minimum - 0.5,
-            1.0,
-            f"minimum {minimum} ",
+            line,
+            0.98,  # a little below the top edge, so the label's box lies inside the axes
+            f" minimum {minimum}" if right else f"minimum {minimum} ",
             color=INK,
-            ha="right",
+            ha="left" if right else "right",
             va="top",
             transform=ax.get_xaxis_transform(),
         )

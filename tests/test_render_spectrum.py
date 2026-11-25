@@ -112,17 +112,34 @@ def test_ticks_are_whole_numbers(reads, both, bars_drawn):
     assert all(label.get_text().isdigit() for _, label in ticks)
 
 
-@pytest.mark.parametrize("minimum", [None, 50])
+def _touch(first, second) -> bool:
+    return (
+        first.x0 < second.x1
+        and second.x0 < first.x1
+        and first.y0 < second.y1
+        and second.y0 < first.y1
+    )
+
+
+@pytest.mark.parametrize("minimum", [None, 1, 2, 3, 50])
 def test_every_text_lies_inside_a_small_figure(minimum):
-    if minimum is not None:
+    if minimum == 50:
         assert minimum > max(expected_spectrum(False))  # above every multiplicity
     _, fig, ax = chart(False, minimum, figsize=(4.5, 3))
-    shown = [ax.xaxis.label, ax.yaxis.label, *ax.texts, *(t for _, t in shown_ticks(ax))]
+    ticks = shown_ticks(ax)
+    shown = [ax.xaxis.label, ax.yaxis.label, *ax.texts, *(t for _, t in ticks)]
     assert len(ax.texts) == (minimum is not None)
     for t in shown:
         box = t.get_window_extent()
         assert fig.bbox.x0 <= box.x0 and box.x1 <= fig.bbox.x1, t.get_text()
         assert fig.bbox.y0 <= box.y0 and box.y1 <= fig.bbox.y1, t.get_text()
+    for label in ax.texts:  # the minimum's label: in the plot, clear of the y ticks and the bars
+        box = label.get_window_extent()
+        assert ax.bbox.x0 <= box.x0 and box.x1 <= ax.bbox.x1, label.get_text()
+        assert ax.bbox.y0 <= box.y0 and box.y1 < ax.bbox.y1, label.get_text()
+        y_ticks = [t for axis, t in ticks if axis is ax.yaxis]
+        assert y_ticks and not any(_touch(box, t.get_window_extent()) for t in y_ticks)
+        assert not any(_touch(box, p.get_window_extent()) for _, _, p in bars(ax))
 
 
 def test_no_mark_one_colour_and_no_hatch_without_a_minimum():
