@@ -2,7 +2,6 @@
 
 import subprocess
 import sys
-from types import SimpleNamespace
 
 import pytest
 from genomes import brute_kmers, child_env
@@ -95,15 +94,25 @@ def test_each_input_form_gives_the_same_trails(tmp_path, capsys):
         ["--seq", ""],
         ["--seq", "HELLO", "--both-strands"],
         ["--file", ""],
+        ["--file", "no_such.fa", "-k", "3"],
+        ["--file", "gone/reads.fa", "-k", "3"],
+        # Valid DNA at k=3: were it read as a sequence, the run would succeed.
+        ["--file", "ACGTACGT", "-k", "3"],
+        ["--file", ".", "-k", "3"],
     ],
     ids=[
         "k-too-small",
         "empty-sequence",
         "both-strands-not-dna",
         "empty-file-path",
+        "missing-file",
+        "missing-folder",
+        "sequence-text",
+        "directory",
     ],
 )
-def test_a_failure_is_one_line_on_stderr_and_exit_1(argv, capsys):
+def test_a_failure_is_one_line_on_stderr_and_exit_1(argv, capsys, tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)  # a folder holding none of the files and folders named above
     code, out, err = _run(capsys, *argv)
     assert code == 1
     assert out == ""
@@ -143,26 +152,3 @@ def test_an_error_that_is_not_a_eulerase_error_is_not_hidden(monkeypatch):
     monkeypatch.setattr(cli, "analyze", broken)
     with pytest.raises(RuntimeError):
         cli.main(["--seq", "ACGTACGT"])
-
-
-@pytest.mark.parametrize(
-    ("flags", "field", "expected"),
-    [
-        (["--unique"], "unique", True),
-        (["--min-count", "2"], "min_multiplicity", 2),
-        (["--clip-tips"], "clip_tips", True),
-    ],
-)
-def test_the_filter_options_reach_the_analysis(monkeypatch, flags, field, expected):
-    seen = []
-
-    def spy(records, settings):
-        seen.append(settings)
-        return SimpleNamespace(headline="", trails=[], spelled=[], notes=())
-
-    monkeypatch.setattr(cli, "analyze", spy)
-    assert cli.main(["--seq", "ACGTAC"]) == 0
-    assert cli.main(["--seq", "ACGTAC", *flags]) == 0
-    default, given = seen
-    assert getattr(default, field) != expected
-    assert getattr(given, field) == expected

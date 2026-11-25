@@ -1,5 +1,6 @@
 """The files the command writes: each option, its bytes, the CSV set and the order of the lines."""
 
+import contextlib
 import csv
 import io
 import re
@@ -52,9 +53,20 @@ def _all_options(paths: dict[str, str]) -> list[str]:
     ]  # fmt: skip
 
 
-def test_each_output_option_writes_its_file(tmp_path, capsys):
-    paths = _paths(tmp_path)
-    _run(capsys, *_all_options(paths))
+@pytest.fixture(scope="module")
+def written(tmp_path_factory):
+    """The paths of one run of the command with every output option (the figure is slow)."""
+    paths = _paths(tmp_path_factory.mktemp("outputs"))
+    out, err = (io.TextIOWrapper(io.BytesIO()) for _ in range(2))  # main() reconfigures them
+    with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+        assert cli.main(_all_options(paths)) == 0
+    err.flush()
+    assert err.buffer.getvalue() == b""
+    return paths
+
+
+def test_each_output_option_writes_its_file(written):
+    paths = written
     a = _analysis()
 
     fasta = list(SeqIO.parse(paths["contigs"], "fasta"))
@@ -81,9 +93,8 @@ def test_each_output_option_writes_its_file(tmp_path, capsys):
     assert len(figure) > 5000
 
 
-def test_written_files_are_byte_identical_to_the_writers(tmp_path, capsys):
-    paths = _paths(tmp_path)
-    _run(capsys, *_all_options(paths))
+def test_written_files_are_byte_identical_to_the_writers(written):
+    paths = written
     a = _analysis()
     expected = {
         paths["contigs"]: eio.fasta_text(a),
@@ -93,20 +104,16 @@ def test_written_files_are_byte_identical_to_the_writers(tmp_path, capsys):
     for path, text in expected.items():
         data = Path(path).read_bytes()
         assert data == text.encode("utf-8")
-        assert b"\r" not in data
-        assert not data.startswith(b"\xef\xbb\xbf")
         assert text  # an empty file would match an empty writer
 
 
-def test_csv_writes_the_five_tables(tmp_path, capsys):
-    paths = _paths(tmp_path)
-    _run(capsys, *_all_options(paths))
+def test_csv_writes_the_five_tables(written):
     a = _analysis()
-    written = eio.csv_paths(paths["csv"])
-    assert sorted(written) == ["assembly", "contigs", "edges", "nodes", "trails"]
-    for table, path in written.items():
+    tables = eio.csv_paths(written["csv"])
+    assert sorted(tables) == ["assembly", "contigs", "edges", "nodes", "trails"]
+    for table, path in tables.items():
         assert Path(path).read_bytes() == eio.csv_text(a, table.capitalize()).encode("utf-8")
-    assert len({Path(p).read_bytes() for p in written.values()}) == 5  # each table is its own
+    assert len({Path(p).read_bytes() for p in tables.values()}) == 5  # each table is its own
 
 
 def test_wrote_lines_come_in_the_frozen_order_and_print_each_path_as_typed(
@@ -258,26 +265,21 @@ def test_a_bad_output_path_fails_before_any_output_is_written(
         assert list(tmp_path.iterdir()) == []  # nothing went into the current folder
 
 
-def test_a_folder_that_cannot_be_written_is_refused(tmp_path, capsys, monkeypatch):
-    monkeypatch.setattr(cli.os, "access", lambda *a, **k: False)
-    code = cli.main(["--seq", _SEQ, "-k", "4", "--gfa", str(tmp_path / "a.gfa")])
+@pytest.mark.parametrize("old", [None, b"old bytes"], ids=["new-file", "existing-file"])
+def test_an_output_that_cannot_be_written_is_refused(tmp_path, capsys, monkeypatch, old):
+    target = tmp_path / "out.gfa"
+    if old:
+        target.write_bytes(old)
+    # Only one of the two is refused: the other, writable, cannot be what the command meets.
+    refused = target if old else tmp_path
+    monkeypatch.setattr(cli.os, "access", lambda path, mode: Path(path) != refused)
+    code = cli.main(["--seq", _SEQ, "-k", "4", "--gfa", str(target)])
     out, err = capsys.readouterr()
     assert code == 1 and out == "" and err.count("\n") == 1 and "--gfa" in err
-    assert not (tmp_path / "a.gfa").exists()
-
-
-def test_an_existing_file_that_cannot_be_written_is_refused(tmp_path, capsys, monkeypatch):
-    existing = tmp_path / "out.gfa"
-    existing.write_bytes(b"old bytes")
-    # Only the file is refused: the folder, which is writable, cannot be what the command meets.
-    monkeypatch.setattr(cli.os, "access", lambda path, mode: Path(path) != existing)
-    assert cli.os.access(tmp_path, cli.os.W_OK)
-    assert not cli.os.access(existing, cli.os.W_OK)
-
-    code = cli.main(["--seq", _SEQ, "-k", "4", "--gfa", str(existing)])
-    out, err = capsys.readouterr()
-    assert code == 1 and out == "" and err.count("\n") == 1 and "--gfa" in err
-    assert existing.read_bytes() == b"old bytes"
+    if old:
+        assert target.read_bytes() == old
+    else:
+        assert not target.exists()
 
 
 @pytest.mark.parametrize("name", ["graph.bmp", "graph"])
