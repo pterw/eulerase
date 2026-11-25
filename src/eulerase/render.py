@@ -705,16 +705,18 @@ def _wrapped(text: str, pt: float, advance: float, width: float) -> tuple[str, i
     return wrapped, wrapped.count("\n") + 1
 
 
-def _draw_header(fig: Figure, a: Analysis) -> float:
-    """The headline, the reading line and the settings line, from the top left, wrapped to the
-    figure's width. Returns the height they take, in points."""
+def _draw_header(fig: Figure, a: Analysis, graph: bool) -> float:
+    """The headline, the reading line (only over a drawn graph, `graph`) and the settings line,
+    from the top left, wrapped to the figure's width. Returns the height they take, in points."""
     width, height = fig.get_figwidth() * 72, fig.get_figheight() * 72
     used = FRAME_MARGIN
     for gid, text, pt, bold in (
         ("headline", a.headline, HEADLINE_PT, True),
-        ("reading", READING, FRAME_PT, False),
+        ("reading", READING if graph else "", FRAME_PT, False),
         ("settings", settings_text(a.settings), FRAME_PT, False),
     ):
+        if not text:
+            continue
         advance = BOLD_ADVANCE if bold else SANS_ADVANCE
         lines, count = _wrapped(text, pt, advance, width - 2 * FRAME_MARGIN)
         fig.text(
@@ -780,18 +782,24 @@ def _draw_left_out(fig: Figure, plot: _Plot, bottom: float) -> None:
         )
 
 
-def _draw_note(ax, a: Analysis) -> None:
-    """The one explanation of the drawing limit, with both counts, in place of the plot."""
+def _draw_note(ax, a: Analysis, tables: bool) -> None:
+    """The one explanation of the drawing limit, with both counts, in place of the plot. The window
+    has tables and points at them (`tables`) and no header, so its note carries the headline; a
+    saved figure has a header and no tables."""
+    limits = " and ".join(_counts_over_limit(_walk_graph(a)))
+    note = f"(The graph is not drawn: {limits}."
+    if tables:
+        hint = "Use the tables below to inspect the Eulerian trails and assembly contigs."
+        note = f"{a.headline}\n\n{note}\n{hint}"
     ax.text(
         0.5,
         0.5,
-        f"{a.headline}\n\n(The graph is not drawn: "
-        f"{' and '.join(_counts_over_limit(_walk_graph(a)))}.\n"
-        "Use the tables below to inspect the Eulerian trails and assembly contigs.)",
+        note + ")",
         ha="center",
         va="center",
         color=INK,
         fontsize=12,
+        wrap=True,
         transform=ax.transAxes,
         gid="note",
     )
@@ -808,11 +816,11 @@ def draw_figure(
     ax = fig.add_subplot(111)
     ax.set_facecolor(SURFACE)
     ax.axis("off")
-    if layout is None:
-        _draw_note(ax, a)
-        return
     width, height = fig.get_figwidth() * 72, fig.get_figheight() * 72
-    top = _draw_header(fig, a)
+    top = _draw_header(fig, a, graph=layout is not None)
+    if layout is None:
+        _draw_note(ax, a, tables=False)
+        return
     footer = FRAME_MARGIN + _draw_legend(fig, a) + FRAME_GAP
     bottom = footer + FRAME_PT * LINE_PITCH + FRAME_GAP  # the left-out text lies above the legend
     ax.set_position(
@@ -881,7 +889,7 @@ class StepScene:
         self._plot: _Plot | None = None
         self._hover: Text | None = None
         if layout is None:
-            _draw_note(ax, a)
+            _draw_note(ax, a, tables=True)
             return
         self._plot = _build_plot(ax, a, layout, fig.get_figwidth() / fig.get_figheight())
         self._plot.style(0)

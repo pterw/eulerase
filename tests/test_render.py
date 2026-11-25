@@ -3,7 +3,7 @@
 import re
 
 import pytest
-from figure_probe import INPUTS, SAVED_SIZE, SMALL_SIZE, drawn, elements, extent, overlap
+from figure_probe import INPUTS, SAVED_SIZE, SMALL_SIZE, drawn, elements, extent, frame, overlap
 from genomes import random_dna
 from matplotlib.backends.backend_agg import FigureCanvasAgg
 from matplotlib.figure import Figure
@@ -102,11 +102,23 @@ def test_layout_is_none_above_the_drawing_limit_and_the_figure_says_why():
     a = _analysis(random_dna(1500, seed=1), k=7)
     assert len(a.nodes) > MAX_DRAW_NODES
     assert compute_layout(a) is None
-    fig, _ = _figure(a)
+    fig, layout = drawn(a)  # at SAVED_SIZE, rendered
+    assert layout is None
     texts = [t.get_text() for t in elements(fig, "note")]
     assert len(texts) == len(fig.axes[0].texts) == 1
     assert str(MAX_DRAW_NODES) in texts[0] and str(len(a.nodes)) in texts[0]
+    assert "below" not in texts[0]  # a saved file has no tables to point at
     assert not elements(fig, "node")
+    # the headline and the settings are on it, as on any figure, clear of the note
+    header = {gid: frame(fig, gid) for gid in ("headline", "settings")}
+    assert " ".join(a.headline.split()) == " ".join(header["headline"][0].get_text().split())
+    assert settings_text(a.settings) in " ".join(header["settings"][0].get_text().split())
+    # said once (the note does not repeat it), and no reading line about arrows over no graph
+    everything = " ".join(" ".join(t.get_text().split()) for t in fig.texts + fig.axes[0].texts)
+    assert everything.count(" ".join(a.headline.split())) == 1
+    assert not frame(fig, "reading")
+    (note,) = elements(fig, "note")
+    assert not any(overlap(extent(fig, note), extent(fig, t), margin=0) for t in fig.texts)
 
 
 # Four nodes, 78 arrows: the two counts of the drawing limit differ, so a swap shows.

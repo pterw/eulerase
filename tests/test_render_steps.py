@@ -210,7 +210,14 @@ def test_a_scene_with_no_layout_says_why(monkeypatch):
     scene, plain = _scene(a, None, SMALL_SIZE)
     wanted = [t.get_text() for t in elements(fig, "note")]
     assert len(wanted) == 1 and "over the limit of 2" in wanted[0]
-    assert [t.get_text() for t in elements(plain, "note")] == wanted
+    (shown,) = [t.get_text() for t in elements(plain, "note")]
+    # the window has tables and points at them; the saved figure has none and does not
+    assert "Use the tables below" in shown and "Use the tables below" not in wanted[0]
+    # the window has no header, so its note carries the headline; the saved figure's header does
+    assert a.headline in shown and a.headline not in wanted[0]
+    assert wanted[0].removesuffix(")") in shown
+    # no line of the note leaves the small canvas
+    assert inside(extent(plain, elements(plain, "note")[0]), plain)
     scene.show(3)
     scene.show_hover(a.nodes[0].node)
     scene.show_hover(None)
