@@ -118,6 +118,10 @@ def _contig_items(a: Analysis) -> list[tuple[Contig, int | None]]:
     return list(zip(a.contigs, counts, strict=True))
 
 
+# The Assembly measures that are text, not data: tables of numbers and CSV files leave them out.
+_TEXT_MEASURES = ("settings", "orf rule")
+
+
 def _assembly_items(a: Analysis) -> list[tuple[str, object]]:
     m = a.metrics
     rule = NOT_AVAILABLE if a.orfs is None else orfs.orf_rule_text()
@@ -205,6 +209,14 @@ def rows(a: Analysis, table: str) -> list[tuple[str, ...]]:
     """Every row of a table, every cell already formatted; nothing is cut."""
     items, cells = _TABLE_DEFS[table]
     return [tuple(format_cell(get(item)) for _, get in cells) for item in items(a)]
+
+
+def data_rows(a: Analysis, table: str) -> list[tuple[str, ...]]:
+    """`rows`, without the text measures of the Assembly table."""
+    found = rows(a, table)
+    if table == "Assembly":
+        return [row for row in found if row[0] not in _TEXT_MEASURES]
+    return found
 
 
 def limit_rows(rows: Sequence[tuple[str, ...]]) -> tuple[list[tuple[str, ...]], str | None]:

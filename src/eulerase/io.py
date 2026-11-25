@@ -14,7 +14,7 @@ from Bio.Seq import Seq
 from Bio.SeqFeature import CompoundLocation, SeqFeature, SimpleLocation
 from Bio.SeqRecord import SeqRecord
 
-from eulerase.analysis import TABLES, Analysis, columns, format_cell, rows, settings_text
+from eulerase.analysis import TABLES, Analysis, columns, data_rows, format_cell, settings_text
 from eulerase.assembly import gfa_links
 from eulerase.errors import EuleraseError
 from eulerase.orfs import Orf, orf_rule_text
@@ -217,18 +217,12 @@ def gfa_text(a: Analysis) -> str:
     return "\n".join(lines) + "\n"
 
 
-# Rows of the Assembly table that are text, not data: CSV files hold data only.
-_TEXT_MEASURES = ("settings", "orf rule")
-
-
 def csv_text(a: Analysis, table: str) -> str:
     """One table as CSV text: a header row, then every row (none cut), `\\n` after each."""
     out = io.StringIO()
     writer = csv.writer(out, lineterminator="\n")
     writer.writerow(columns(table))
-    for row in rows(a, table):
-        if not (table == "Assembly" and row[0] in _TEXT_MEASURES):
-            writer.writerow(row)
+    writer.writerows(data_rows(a, table))  # CSV files hold data only
     return out.getvalue()
 
 

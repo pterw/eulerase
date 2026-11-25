@@ -22,7 +22,6 @@ MIN_WINDOW = (900, 560)
 # take this much of the screen on top of it.
 SCREEN_ALLOWANCE = (0, 120)
 
-_TEXT_MEASURES = ("settings", "orf rule")
 _CONTIG_EXPORTS = ("fasta", "genbank", "gfa")
 # kind: (the dialog's suggested name, the writer of its text; None where the window draws it)
 _TEXT_EXPORTS = {
@@ -191,19 +190,12 @@ class Scheduler(Protocol):
     def cancel(self, handle: object) -> None: ...
 
 
-def _table_rows(a: Analysis, name: str) -> list[tuple[str, ...]]:
-    rows = analysis.rows(a, name)
-    if name == "Assembly":  # the numeric rows only; the text rows go to the details
-        return [row for row in rows if row[0] not in _TEXT_MEASURES]
-    return rows
-
-
 def _orf_rule_line(a: Analysis) -> str:
     return f"orf rule: {dict(analysis.rows(a, 'Assembly'))['orf rule']}"
 
 
 def _table_view(a: Analysis, name: str) -> TableView:
-    shown, note = analysis.limit_rows(_table_rows(a, name))
+    shown, note = analysis.limit_rows(analysis.data_rows(a, name))
     if name == "Contigs":
         note = "\n".join(part for part in (note, _orf_rule_line(a)) if part)
     return TableView(name, analysis.columns(name), tuple(shown), note)
