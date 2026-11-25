@@ -47,6 +47,8 @@ VIEW_BUTTONS = ("Zoom", "Pan", "Reset view")
 STEP_BUTTONS = ("First", "Back", "Play", "Forward", "Last")  # the third reads "Pause" while playing
 STEP_METHODS = ("step_start", "step_back", "toggle_play", "step_forward", "step_end")
 ASSEMBLY = "Assembly"
+STEP_LABEL_CHARS = 14  # the step label's least width, in characters
+LEGEND_GAP_PX = 12  # between two legend entries
 TABLE_ROWS = 6  # rows each table asks for, so the pane opens with six whole rows
 STRIP_PAD_PX = 4  # above and below the strip under the graph
 WIDTH_ROWS = 50  # rows of a table read to size its columns
@@ -103,6 +105,10 @@ def tk_sequence(shortcut: str) -> str:
     if "Shift" not in parts and len(keys[-1]) == 1:
         keys[-1] = keys[-1].lower()
     return "<" + "-".join(keys) + ">"
+
+
+def _step_text(step: int, total: int) -> str:
+    return f"step {step} / {total}"
 
 
 def _wrap_to_width(event) -> None:
@@ -298,19 +304,26 @@ class Window:
         self.divider = ttk.PanedWindow(self.explorer, orient="vertical")
         self.divider.pack(fill="both", expand=True)
         graph = ttk.Frame(self.divider)
+        # The step row and the strip are packed at the bottom before the canvas, so the canvas is
+        # what shrinks when the pane is short; on screen the order is canvas, strip, step row.
+        self.steps_frame = ttk.Frame(graph)
+        self.steps_frame.pack(side="bottom", fill="x")
+        self.strip = ttk.Frame(graph)
+        self.strip.pack(side="bottom", fill="x", pady=STRIP_PAD_PX)
         self.canvas_frame = tkinter.Frame(graph, background=render.SURFACE)
         self.canvas_frame.pack(fill="both", expand=True)
-        self.strip = ttk.Frame(graph)
-        self.strip.pack(fill="x", pady=STRIP_PAD_PX)
-        self.legend_frame = ttk.Frame(self.strip)
-        self.legend_frame.pack(side="left")
+        # The view buttons and the note are packed before the legend, which expands: the legend
+        # takes what is left and wraps, so it cannot push them out.
         self.view_buttons = {
             name: ttk.Button(self.strip, text=name, state="disabled") for name in VIEW_BUTTONS
         }
         for button in reversed(list(self.view_buttons.values())):
             button.pack(side="right", padx=(6, 0))
-        self.steps_frame = ttk.Frame(graph)
-        self.steps_frame.pack(fill="x")
+        self.left_out_label = ttk.Label(self.strip, style="Muted.TLabel")
+        self.left_out_label.pack(side="right", padx=(12, 0))
+        self.legend_frame = ttk.Frame(self.strip)
+        self.legend_frame.pack(side="left", fill="x", expand=True)
+        self.legend_frame.bind("<Configure>", self._wrap_legend)
         self.tables_frame = ttk.Frame(self.divider)
         self.divider.add(graph, weight=3)
         self.divider.add(self.tables_frame, weight=1)
@@ -602,8 +615,6 @@ class Window:
         self.canvas_widget.pack(fill="both", expand=True)
         # Not shown: it supplies the zoom and pan modes; exports go through the File menu.
         self.toolbar = NavigationToolbar2Tk(self.canvas, self.canvas_frame, pack_toolbar=False)
-        self.left_out_label = ttk.Label(self.strip, style="Muted.TLabel")
-        self.left_out_label.pack(side="left", padx=(12, 0))
         self.scene = None
         self.analysis = None
         self._step = 0
@@ -615,11 +626,15 @@ class Window:
     def _step_controls(self) -> None:
         self.step_buttons = [ttk.Button(self.steps_frame, text=t) for t in STEP_BUTTONS]
         self.scale = ttk.Scale(self.steps_frame, from_=0, to=0, orient="horizontal")
-        self.step_label = ttk.Label(self.steps_frame, width=14)
+        self.step_label = ttk.Label(self.steps_frame, width=STEP_LABEL_CHARS)
         first, back, play, forward, last = self.step_buttons
-        for widget in (first, back, play, self.scale, forward, last, self.step_label):
-            expand = widget is self.scale
-            widget.pack(side="left", fill="x" if expand else "none", expand=expand, padx=2)
+        # Left to right: first, back, play, scale, forward, last, label. The buttons and the
+        # label are packed before the scale, which expands, so the scale takes what is left.
+        for widget in (first, back, play):
+            widget.pack(side="left", padx=2)
+        for widget in (self.step_label, last, forward):
+            widget.pack(side="right", padx=2)
+        self.scale.pack(side="left", fill="x", expand=True, padx=2)
         self._show_step_label(0, 0)
 
     def _set_graph_controls(self, enabled: bool) -> None:
@@ -628,7 +643,7 @@ class Window:
             widget.state([state])
 
     def _show_step_label(self, step: int, total: int) -> None:
-        self.step_label.configure(text=f"step {step} / {total}")
+        self.step_label.configure(text=_step_text(step, total))
 
     def _measure_aspect(self) -> float:
         """The canvas's width over its height now; sets nothing."""
@@ -656,17 +671,32 @@ class Window:
         self.analysis = result.analysis
         self.headline.configure(text=result.headline)
         self.scale.configure(to=result.steps)
+        step_text = _step_text(result.steps, result.steps)  # the longest the label will hold
+        self.step_label.configure(width=max(STEP_LABEL_CHARS, len(step_text)))
         if result.layout is None:
             self._build_scene(None)  # past the drawing limit: the canvas holds only the text
         else:
             self._relayout()  # the worker's layout may be for another canvas shape
         for entry in render.legend_entries(result.analysis):
             self._legend_sample(entry)
+        self.root.update_idletasks()  # the entries report their size only after this
+        self._wrap_legend()
         self._set_graph_controls(True)
+
+    def _wrap_legend(self, event=None) -> None:
+        """Lay the legend entries out in rows as wide as the legend is, each entry whole."""
+        samples = self.legend_frame.winfo_children()
+        if not samples:
+            return
+        # Grid makes every column as wide as its widest entry, so wrap on one cell for all.
+        cell = max(sample.winfo_reqwidth() for sample in samples) + LEGEND_GAP_PX
+        columns = max(1, self.legend_frame.winfo_width() // cell)
+        for index, sample in enumerate(samples):
+            row, column = divmod(index, columns)
+            sample.grid(row=row, column=column, sticky="w", padx=(0, LEGEND_GAP_PX))
 
     def _legend_sample(self, entry) -> None:
         sample = ttk.Frame(self.legend_frame)
-        sample.pack(side="left", padx=(0, 12))
         line = tkinter.Canvas(
             sample, width=34, height=12, highlightthickness=0, background=render.WINDOW
         )
