@@ -48,6 +48,12 @@ def test_a_build_runs_in_the_worker_with_a_busy_state_and_shows_the_analysis():
     assert ("set_playing", False) in view.calls
     assert ("show_status", view.result.status, False) in view.calls
 
+    first_status = view.status
+    assert first_status  # so a difference below cannot come from an empty line
+    presenter.build()
+    assert presenter.phase == BUSY
+    assert view.status and view.status != first_status
+
 
 @pytest.mark.parametrize("phase", [EMPTY, READY])
 def test_stop_does_nothing_unless_a_build_is_running(phase):

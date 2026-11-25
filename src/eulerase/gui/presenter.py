@@ -362,6 +362,7 @@ class Presenter:
         self._clear_result()
         self._phase = BUSY
         self._view.show_busy(True)
+        self._view.show_status("Building...")  # the last result's line is no longer true
         self._worker.start(self._job(records, settings, aspect, self._token))
 
     def _confirmed(self, records: Sequence[Record], settings: Settings) -> bool:
