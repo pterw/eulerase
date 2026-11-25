@@ -176,21 +176,29 @@ def test_contig_exports_are_unavailable_when_no_contig_was_assembled(tmp_path):
         ("csv", "missing/x.csv", None, "x_edges.csv"),
         ("fasta", "missing/out.fasta", None, "out.fasta"),
         ("csv", "x.csv", "x_nodes.csv", "x_nodes.csv"),  # the second file of the five
+        ("figure", "fig.png", None, "Permission denied"),  # an OSError that carries no file name
     ],
-    ids=["csv, no folder", "fasta, no folder", "csv, second file blocked"],
+    ids=["csv, no folder", "fasta, no folder", "csv, second file blocked", "figure, no file name"],
 )
-def test_a_write_failure_is_one_sentence_naming_the_file_that_failed(
-    kind, saved, blocker, failed, tmp_path
+def test_a_write_failure_is_one_sentence_naming_the_file_if_known(
+    kind, saved, blocker, failed, tmp_path, monkeypatch
 ):
     view, presenter = built(form(OVERLAPPING))
     view.save_path = str(tmp_path / saved)
     if blocker:
         (tmp_path / blocker).mkdir()  # a directory cannot be opened for writing
+    if kind == "figure":
+
+        def refuse(analysis, path):
+            raise OSError(13, "Permission denied")  # no filename, as a window's save can raise
+
+        monkeypatch.setattr(view, "save_figure", refuse)
 
     presenter.export(kind)
 
     assert view.status_is_error
     assert view.status and "\n" not in view.status and "Traceback" not in view.status
+    assert "None" not in view.status
     assert failed in view.status
     assert presenter.phase == READY  # the result stays; only the write failed
     if kind == "csv":

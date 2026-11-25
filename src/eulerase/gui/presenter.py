@@ -266,9 +266,9 @@ def _settings(form: FormValues) -> Settings:
 
 def _unwritable(error: OSError, after: str = "") -> str:
     reason = error.strerror or "unwritable"
+    named = f" {error.filename}" if error.filename else ""
     return (
-        f"The file {error.filename} could not be written ({reason}){after}; "
-        "check the folder and permissions."
+        f"The file{named} could not be written ({reason}){after}; check the folder and permissions."
     )
 
 
