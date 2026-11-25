@@ -192,10 +192,7 @@ def _open_contigs(ag: nx.DiGraph, strand: str, used_edges: set[tuple[str, str]])
             used_edges.add((start, target))
             cur = target
             while is_internal(cur):
-                succs = list(ag.successors(cur))
-                if not succs or (cur, succs[0]) in used_edges:
-                    break
-                nxt = succs[0]
+                nxt = next(iter(ag.successors(cur)))
                 path.append((cur, nxt))
                 used_edges.add((cur, nxt))
                 cur = nxt
@@ -211,30 +208,18 @@ def _cyclic_contigs(ag: nx.DiGraph, strand: str, used_edges: set[tuple[str, str]
     letters whatever k is. The walk starts at the smallest node, which makes the circle its
     least rotation (the smallest (k-1)-mer begins the smallest rotation)."""
     contigs: list[Contig] = []
-    remaining = set(ag.edges()) - used_edges
-    if not remaining:
-        return contigs
-    temp = nx.DiGraph()
-    for u, v in remaining:
-        temp.add_edge(u, v, **ag.edges[u, v])
-    for comp in nx.weakly_connected_components(temp):
-        sub = temp.subgraph(comp)
-        start_node = min(comp)
-        cur, visited, cycle = start_node, set(), []
-        while True:
-            nxt_list = [w for w in sub.successors(cur) if (cur, w) not in visited]
-            if not nxt_list:
-                break
-            nxt = nxt_list[0]
-            cycle.append((cur, nxt))
-            visited.add((cur, nxt))
-            cur = nxt
-            if cur == start_node:
-                break
-        if cycle:
-            seq = "".join(src[0] for src, _ in cycle)
-            mults = [sub.edges[u, v]["multiplicity"] for u, v in cycle]
-            contigs.append(_make_contig(seq, mults, True, strand))
+    onward = {u: v for u, v in ag.edges() if (u, v) not in used_edges}  # one way on from each node
+    for start in sorted(onward):
+        if start not in onward:  # already walked as part of an earlier cycle
+            continue
+        cycle, node = [], start
+        while node in onward:
+            nxt = onward.pop(node)
+            cycle.append((node, nxt))
+            node = nxt
+        seq = "".join(src[0] for src, _ in cycle)
+        mults = [ag.edges[u, v]["multiplicity"] for u, v in cycle]
+        contigs.append(_make_contig(seq, mults, True, strand))
     return contigs
 
 
