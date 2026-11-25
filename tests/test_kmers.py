@@ -15,10 +15,6 @@ def _records(*sequences: str) -> list[Record]:
     return [Record(f"r{i}", s) for i, s in enumerate(sequences, 1)]
 
 
-def _same_multiset(actual: list[str] | tuple[str, ...], expected: list[str]) -> bool:
-    return Counter(actual) == Counter(expected)
-
-
 @pytest.mark.parametrize("unique", [False, True])
 @pytest.mark.parametrize("both", [False, True])
 @pytest.mark.parametrize("k", range(2, 13))
@@ -31,12 +27,6 @@ def test_from_sequences_matches_brute_force_counts(k, both, unique):
     else:
         assert list(result.items) == expected
     assert result.k == k
-
-
-def test_oracle_rejects_a_missing_kmer():
-    expected = brute_kmers(["ACGTACGT"], 3, False)
-    assert _same_multiset(expected, expected)
-    assert not _same_multiset(expected[1:], expected)
 
 
 def test_self_reverse_complement_kmer_counts_twice():
@@ -86,9 +76,12 @@ def test_invalid_k_is_refused_everywhere(bad_k):
         kmers.from_sequences(_records("ACGTACGT"), bad_k, both_strands=False, unique=False)
 
 
-@pytest.mark.parametrize("sequences", [["A", "C"], [""]])
-def test_kmer_list_with_an_invalid_length_is_refused(sequences):
-    with pytest.raises(EuleraseError, match="k"):
+@pytest.mark.parametrize(
+    ("sequences", "match"),
+    [(["A", "C"], "k"), ([""], "k"), (["ACG", "ACGT"], "same length")],
+)
+def test_kmer_list_with_an_invalid_length_is_refused(sequences, match):
+    with pytest.raises(EuleraseError, match=match):
         kmers.from_kmer_list(_records(*sequences), both_strands=False, unique=False)
 
 
@@ -152,11 +145,6 @@ def test_both_strands_refuses_non_dna_naming_the_letters():
         kmers.from_kmer_list(_records("ACX", "CGT"), both_strands=True, unique=False)
     # Without both strands the same letters are fine.
     kmers.from_sequences(_records("ACGXT"), 3, both_strands=False, unique=False)
-
-
-def test_kmer_list_mixed_lengths_refused():
-    with pytest.raises(EuleraseError, match="same length"):
-        kmers.from_kmer_list(_records("ACG", "ACGT"), both_strands=False, unique=False)
 
 
 def test_kmer_list_uses_its_own_length_and_adds_reverse_complements():

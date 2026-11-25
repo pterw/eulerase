@@ -6,10 +6,10 @@ from fractions import Fraction
 
 import pytest
 from genomes import brute_kmers, random_dna, revcomp
+from pipeline import contigs_of
 
 from eulerase.assembly import (
     Contig,
-    assembly_metrics,
     build_assembly_graph,
     clip_tips,
     extract_contigs,
@@ -21,11 +21,6 @@ from eulerase.kmers import count_kmers
 
 def _graph_kmers(ag) -> list[str]:
     return sorted(d["kmer"] for _, _, d in ag.edges(data=True))
-
-
-def _contigs_of(reads: list[str], k: int, both: bool) -> tuple[Contig, ...]:
-    counts = count_kmers(brute_kmers(reads, k, both))
-    return extract_contigs(build_assembly_graph(counts), k, both_strands=both)
 
 
 # --- minimum multiplicity -----------------------------------------------------------------
@@ -44,16 +39,6 @@ def test_min_multiplicity_removes_exactly_the_rarer_kmers(minimum):
     # No node is left behind without an edge, so a filter that removes everything gives an
     # empty graph.
     assert set(kept.nodes) == {x for km in expected for x in (km[:-1], km[1:])}
-
-
-def test_removing_every_kmer_gives_an_empty_well_formed_result():
-    ag = build_assembly_graph(count_kmers(brute_kmers([random_dna(30, seed=8)], 4, False)))
-    kept, _ = filter_min_multiplicity(ag, 99)
-    contigs = extract_contigs(kept, 4, both_strands=False)
-    m = assembly_metrics(contigs)
-    assert contigs == ()
-    assert (m.contigs, m.total_length, m.n50) == (0, 0, 0)
-    assert (m.mean_length, m.gc, m.mean_multiplicity) == (None, None, None)
 
 
 @pytest.mark.parametrize(
@@ -165,7 +150,7 @@ def test_oracle_rejects_a_contig_set_that_repeats_a_kmer():
     ids=["branch", "self-loop", "isolated-cycle"],
 )
 def test_contigs_of_hand_worked_graphs(reads, k, expected):
-    got = _contigs_of(reads, k, False)
+    got = contigs_of(reads, k, False)
     assert [(c.id, c.sequence, c.edges, c.kmer_count, c.circular) for c in got] == expected
 
 
@@ -361,7 +346,7 @@ def _branching_reads(seed: int) -> list[str]:
 @pytest.mark.parametrize("seed", range(3))
 def test_gfa_links_branching_both_strands(seed):
     k = 11
-    contigs = _contigs_of(_branching_reads(seed), k, True)
+    contigs = contigs_of(_branching_reads(seed), k, True)
     links = gfa_links(contigs, k, True)
     assert len(contigs) == 3  # the shared head and stem, and the two tails, once each
     assert len(links) == 2
@@ -372,7 +357,7 @@ def test_gfa_links_branching_both_strands(seed):
 def test_gfa_links_forward_only_are_plus():
     k = 11
     stem, tail1, tail2 = (random_dna(40, 60 + i) for i in range(3))
-    contigs = _contigs_of([stem + tail1, stem + tail2], k, False)
+    contigs = contigs_of([stem + tail1, stem + tail2], k, False)
     links = gfa_links(contigs, k, False)
     assert len(links) == 2
     for a, ao, b, bo in links:

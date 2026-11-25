@@ -4,7 +4,7 @@ import random
 from collections import Counter
 
 import pytest
-from genomes import brute_kmers, random_dna, revcomp
+from genomes import brute_kmers, is_the_genome, random_dna, revcomp
 from pipeline import contig_sequences
 
 from eulerase.analysis import Settings, analyze
@@ -41,11 +41,6 @@ def _random_reads(genome: str, k: int, seed: int) -> list[str]:
     pytest.fail("no read set covering every k-mer found")
 
 
-def _is_the_genome(contigs: list[str], genome: str, both_strands: bool) -> bool:
-    accepted = [genome, revcomp(genome)] if both_strands else [genome]
-    return len(contigs) == 1 and contigs[0] in accepted
-
-
 @pytest.mark.parametrize("both_strands", [False, True])
 @pytest.mark.parametrize("seed", [1, 2, 3])
 @pytest.mark.parametrize("k", [15, 21])
@@ -54,7 +49,7 @@ def test_error_free_reads_give_one_contig_equal_to_the_genome(scheme, k, seed, b
     genome = _genome_without_repeats(k, seed)
     reads = _tiled_reads(genome) if scheme == "tiled" else _random_reads(genome, k, seed)
     contigs = contig_sequences(reads, k, both_strands)
-    assert _is_the_genome(contigs, genome, both_strands), [len(c) for c in contigs]
+    assert is_the_genome(contigs, genome, both_strands), [len(c) for c in contigs]
 
 
 @pytest.mark.parametrize("minimum", [2, 3, 4, 5])
@@ -84,9 +79,11 @@ def test_removed_count_equals_an_independent_count(minimum):
     assert result.removed_kmers == expected
 
 
-def test_oracle_rejects_a_contig_that_is_75_bases_short():
+def test_oracle_rejects_a_contig_that_is_short_off_by_a_base_or_the_wrong_strand():
     genome = random_dna(GENOME_LENGTH, 11)
-    assert _is_the_genome([genome], genome, False)
-    assert not _is_the_genome([genome[:-75]], genome, False)
-    assert not _is_the_genome([revcomp(genome)], genome, False)
-    assert not _is_the_genome([revcomp(genome)[:-75]], genome, True)
+    off = genome[:100] + ("A" if genome[100] != "A" else "C") + genome[101:]
+    assert is_the_genome([genome], genome, False)
+    assert not is_the_genome([off], genome, False)
+    assert not is_the_genome([genome[:-75]], genome, False)
+    assert not is_the_genome([revcomp(genome)], genome, False)
+    assert not is_the_genome([revcomp(genome)[:-75]], genome, True)

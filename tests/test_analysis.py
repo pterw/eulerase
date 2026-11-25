@@ -6,7 +6,7 @@ from collections import Counter
 
 import pytest
 from Bio.Seq import Seq
-from genomes import brute_kmers, random_dna
+from genomes import brute_kmers, least_rotation, random_dna
 
 from eulerase import orfs
 from eulerase.analysis import Settings, analyze, settings_text
@@ -23,12 +23,6 @@ def _records(*sequences: str) -> list[Record]:
 def _spectrum_of(items: list[str]) -> dict[int, int]:
     """Independent spectrum: how many distinct k-mers were seen once, twice, ..."""
     return dict(sorted(Counter(Counter(items).values()).items()))
-
-
-def test_oracle_rejects_a_wrong_spectrum():
-    items = ["AAA", "AAA", "AAC"]  # AAA twice, AAC once: one k-mer seen once, one seen twice
-    assert _spectrum_of(items) == {1: 1, 2: 1}
-    assert _spectrum_of(items) != {1: 1, 2: 2}  # what counting occurrences instead would give
 
 
 @pytest.mark.parametrize("both_strands", [False, True])
@@ -175,17 +169,13 @@ _GENE = (
 )  # fmt: skip
 
 
-def _least_rotation(s: str) -> str:
-    return min(s[i:] + s[:i] for i in range(len(s)))
-
-
 def _circle_cut_through_the_gene(k: int) -> tuple[str, str]:
     """A circle holding _GENE and the contig that spells it (its least rotation), accepted only
     when every circular k-mer is distinct and a linear search of the contig finds no ORF."""
     for seed in range(500):
         circle = _GENE + random_dna(9, seed=seed)
         kmers = {(circle + circle)[i : i + k] for i in range(len(circle))}
-        contig = _least_rotation(circle)
+        contig = least_rotation(circle)
         if len(kmers) == len(circle) and not orfs.find_orfs(contig):
             return circle, contig
     raise AssertionError("no seed cuts the gene")
@@ -306,25 +296,18 @@ def test_notes_only_for_what_was_done(settings, removed, n_notes):
     assert len(a.notes) == n_notes
 
 
-@pytest.mark.parametrize(
-    ("reads", "settings", "smaller", "unpaired"),
-    [
-        # AATC, k=3, both strands: k-mers AAT, ATC and, from the reverse strand GATT, GAT, ATT.
-        # Nodes AA->AT->TC and GA->AT->TT meet at AT: the merge at AT splits the graph into four
-        # one-edge contigs AAT, ATC, ATT, GAT; AAT/ATT and ATC/GAT are twins, so AAT and ATC are
-        # reported.
-        (["AATC"], Settings(k=3, both_strands=True), 2, 0),
-    ],
-    ids=["twin-kept"],
-)
-def test_note_matches_the_strand_labels(reads, settings, smaller, unpaired):
-    a = analyze(_records(*reads), settings)
+def test_note_matches_the_strand_labels():
+    # AATC, k=3, both strands: k-mers AAT, ATC and, from the reverse strand GATT, GAT, ATT.
+    # Nodes AA->AT->TC and GA->AT->TT meet at AT: the merge at AT splits the graph into four
+    # one-edge contigs AAT, ATC, ATT, GAT; AAT/ATT and ATC/GAT are twins, so AAT and ATC are
+    # reported.
+    a = analyze(_records("AATC"), Settings(k=3, both_strands=True))
     labels = Counter(c.strand for c in a.contigs)
-    assert (labels["smaller-of-pair"], labels["unpaired"]) == (smaller, unpaired)
+    assert (labels["smaller-of-pair"], labels["unpaired"]) == (2, 0)
     # The strand note says which strand of a pair is reported: it is there only when some contig
     # was one of a pair. The only other note here is the tip clipping one.
     strand_notes = len(a.notes) - (a.clipped_branches > 0)
-    assert strand_notes == (1 if smaller else 0)
+    assert strand_notes == 1
 
 
 @pytest.mark.parametrize(
@@ -381,10 +364,7 @@ def test_orfs_are_found_per_contig_in_contig_order():
     # no repeated 11-mer, so one forward ORF of 26 amino acids (M, 4 A, 4 L, 4 G, 4 P, 4 V, 4 T,
     # S), 81 nt with the stop, from 0 to 81. Its reverse complement holds no ORF. The second
     # record, shorter than the first, has none.
-    gene = (
-        "ATG" + "GCTGCCGCAGCG" + "CTGCTACTCCTT" + "GGTGGCGGAGGG" + "CCTCCCCCACCG"
-        + "GTTGTCGTAGTG" + "ACTACCACAACG" + "TCT" + "TAA"
-    )  # fmt: skip
+    gene = _GENE
     protein = "M" + "AAAA" + "LLLL" + "GGGG" + "PPPP" + "VVVV" + "TTTT" + "S"
     other = "ACGTTGCAAGGCTTAGCCATCCGTACCAGT"
     assert len(gene) == 81 and len(protein) == 26

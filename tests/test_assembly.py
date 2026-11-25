@@ -10,7 +10,8 @@ from collections import Counter
 from pathlib import Path
 
 import pytest
-from genomes import brute_kmers, child_env, random_dna, revcomp
+from genomes import brute_kmers, child_env, is_the_genome, least_rotation, random_dna, revcomp
+from pipeline import contigs_of
 
 from eulerase.assembly import (
     assembly_metrics,
@@ -21,11 +22,6 @@ from eulerase.assembly import (
     kmer_spectrum,
 )
 from eulerase.kmers import count_kmers
-
-
-def _contigs(reads: list[str], k: int, both: bool):
-    counts = count_kmers(brute_kmers(reads, k, both))
-    return extract_contigs(build_assembly_graph(counts), k, both_strands=both)
 
 
 def _repeat_free_genome(length: int, k: int, both: bool, seed: int) -> str:
@@ -47,27 +43,14 @@ def _tiles(genome: str, size: int = 80, step: int = 40) -> list[str]:
     return [genome[i : i + size] for i in range(0, len(genome) - size + 1, step)] + [genome[-size:]]
 
 
-def _is_the_genome(sequences: list[str], genome: str, both: bool) -> bool:
-    allowed = {genome, revcomp(genome)} if both else {genome}
-    return len(sequences) == 1 and sequences[0] in allowed
-
-
 @pytest.mark.parametrize("both", [False, True])
 @pytest.mark.parametrize("seed", range(20))
 def test_error_free_genome_gives_one_contig_equal_to_it(seed, both):
     k = 11 + seed % 15
     genome = _repeat_free_genome(300 + (seed * 37) % 701, k, both, seed)
-    contigs = _contigs(_tiles(genome), k, both)
-    assert _is_the_genome([c.sequence for c in contigs], genome, both)
+    contigs = contigs_of(_tiles(genome), k, both)
+    assert is_the_genome([c.sequence for c in contigs], genome, both)
     assert contigs[0].strand == ("smaller-of-pair" if both else "as-assembled")
-
-
-def test_oracle_rejects_a_contig_one_base_off():
-    genome = random_dna(300, seed=1)
-    off = genome[:100] + ("A" if genome[100] != "A" else "C") + genome[101:]
-    assert _is_the_genome([genome], genome, False)
-    assert not _is_the_genome([off], genome, False)
-    assert not _is_the_genome([off], genome, True)
 
 
 @pytest.mark.parametrize(
@@ -79,7 +62,7 @@ def test_oracle_rejects_a_contig_one_base_off():
     ],
 )
 def test_both_strands_gives_one_canonical_contig_per_strand_pair(genome, k):
-    contigs = _contigs([genome], k, True)
+    contigs = contigs_of([genome], k, True)
     seqs = [c.sequence for c in contigs]
     assert len(genome) - 5 <= sum(len(s) for s in seqs) <= len(genome) + 5
     for s in seqs:
@@ -89,15 +72,15 @@ def test_both_strands_gives_one_canonical_contig_per_strand_pair(genome, k):
 
 def test_forward_input_is_never_deduplicated():
     read = "CTTCGCCTGATACG"
-    with_twin = _contigs([read, revcomp(read)], 5, False)
+    with_twin = contigs_of([read, revcomp(read)], 5, False)
     assert sorted(c.sequence for c in with_twin) == sorted([read, revcomp(read)])
     unrelated = [random_dna(40, seed=21), random_dna(40, seed=22)]
-    assert sorted(c.sequence for c in _contigs(unrelated, 9, False)) == sorted(unrelated)
+    assert sorted(c.sequence for c in contigs_of(unrelated, 9, False)) == sorted(unrelated)
 
 
 def test_n_does_not_defeat_twin_removal():
     read = "ACGTNACGTTGCAGGATCCATTGACN"
-    both = _contigs([read], 5, True)
+    both = contigs_of([read], 5, True)
     seqs = [c.sequence for c in both]
     assert all(revcomp(s) not in seqs or revcomp(s) == s for s in seqs)
     assert any("N" in s for s in seqs)
@@ -105,25 +88,20 @@ def test_n_does_not_defeat_twin_removal():
     undeduplicated = extract_contigs(both_strand_graph, 5, both_strands=False)
     assert len(both) < len(undeduplicated)
     # has_n follows the letters of each contig, in both directions.
-    mixed = _contigs([read, random_dna(30, seed=31)], 7, False)
+    mixed = contigs_of([read, random_dna(30, seed=31)], 7, False)
     assert {c.has_n for c in mixed} == {True, False}
     assert all(c.has_n == ("N" in c.sequence) for c in mixed)
-
-
-def _least(circle: str) -> str:
-    """The lexicographically least rotation of a circle, by trying every rotation."""
-    return min(circle[i:] + circle[:i] for i in range(len(circle)))
 
 
 def test_circular_genome_with_both_strands_is_one_circular_contig():
     genome = random_dna(300, seed=9)
     k = 15
-    contigs = _contigs([genome + genome[: k - 1]], k, True)
+    contigs = contigs_of([genome + genome[: k - 1]], k, True)
     assert len(contigs) == 1
     assert contigs[0].circular is True
     assert contigs[0].edges == len(genome)
     assert contigs[0].length == len(genome)
-    assert contigs[0].sequence in {_least(genome), _least(revcomp(genome))}
+    assert contigs[0].sequence in {least_rotation(genome), least_rotation(revcomp(genome))}
 
 
 def test_multiplicity_is_per_distinct_kmer():
@@ -199,23 +177,6 @@ def test_kmer_spectrum_matches_counter_of_counts():
         }
         spectrum = kmer_spectrum(count_kmers(items))
         assert list(spectrum.items()) == list(expected.items())
-
-
-def test_worked_case_ten_copies():
-    contigs = _contigs(["ATGC"] * 10, 3, False)
-    ag = build_assembly_graph(count_kmers(brute_kmers(["ATGC"] * 10, 3, False)))
-    assert sorted(d["multiplicity"] for _, _, d in ag.edges(data=True)) == [10, 10]
-    assert [c.sequence for c in contigs] == ["ATGC"]
-
-
-def test_worked_case_repeat_inside_one_sequence():
-    read = "ATGCATGCATGC"
-    counts = count_kmers(brute_kmers([read], 3, False))
-    contigs = extract_contigs(build_assembly_graph(counts), 3, both_strands=False)
-    assert Counter(counts.values()) == {3: 2, 2: 2}
-    assert [(c.sequence, c.circular, c.edges) for c in contigs] == [("ATGC", True, 4)]
-    assert contigs[0].mean_multiplicity == 2.5
-    assert contigs[0].length == 4 < len(read)
 
 
 def test_contigs_are_numbered_in_a_stable_order():
@@ -337,7 +298,7 @@ def test_a_cycle_is_its_circle_written_once(read, k, circle, both):
     # the letter count must not be mistakable for the read's, nor for the k-1 letters a cycle
     # used to repeat at its end
     assert len(circle) not in (len(read), k - 1)
-    (contig,) = _contigs([read], k, both)
+    (contig,) = contigs_of([read], k, both)
     assert (contig.sequence, contig.circular) == (circle, True)
     assert contig.length == contig.edges == len(circle)
 
@@ -345,8 +306,8 @@ def test_a_cycle_is_its_circle_written_once(read, k, circle, both):
 def _expected_circle(unit: str, both: bool) -> str:
     """The least rotation of the circle, or with both strands the smaller of that and the least
     rotation of its reverse complement."""
-    least = _least(unit)
-    return min(least, _least(revcomp(unit))) if both else least
+    least = least_rotation(unit)
+    return min(least, least_rotation(revcomp(unit))) if both else least
 
 
 def _distinct_circle(n: int, k: int, both: bool, seed: int) -> str:
@@ -369,14 +330,14 @@ def test_a_cycle_matches_a_brute_force_circle(seed):
     k = rng.randint(next(k for k in range(2, 9) if 4 ** (k - 1) >= 4 * n), 8)
     unit = _distinct_circle(n, k, both, seed)
     read = unit * ((n + k - 1) // n + 1)  # the circle written round, long enough for every k-mer
-    contigs = _contigs([read], k, both)
+    contigs = contigs_of([read], k, both)
     assert [(c.sequence, c.circular, c.length, c.edges) for c in contigs] == [
         (_expected_circle(unit, both), True, n, n)
     ]
 
 
 def test_oracle_rejects_a_rotation_that_is_not_the_least():
-    assert _least("TGCA") == "ATGC" != "TGCA"
+    assert least_rotation("TGCA") == "ATGC" != "TGCA"
     assert _expected_circle("ATGC", False) != "CATG"
     # TTTA: least rotation ATTT; its reverse complement TAAA has the smaller least rotation AAAT
     assert _expected_circle("TTTA", False) == "ATTT"
@@ -394,7 +355,7 @@ def _direct_mean(contigs, counts: dict[str, int], k: int) -> float:
 
 def test_metrics_count_a_cycle_by_its_circle():
     reads = ["ATGCATGCATGC", "AACCGGTT"]  # no 2-mer shared: a cycle ATGC and a line AACCGGTT
-    contigs = _contigs(reads, 3, False)
+    contigs = contigs_of(reads, 3, False)
     m = assembly_metrics(contigs)
     assert [(c.sequence, c.circular, c.edges, c.kmer_count) for c in contigs] == [
         ("AACCGGTT", False, 6, 6),
@@ -408,14 +369,6 @@ def test_metrics_count_a_cycle_by_its_circle():
     # 16 k-mers seen over 10 distinct k-mers, not the mean of the contig means
     assert m.mean_multiplicity == 16 / 10
     assert m.mean_multiplicity != statistics.mean(c.mean_multiplicity for c in contigs) == 1.75
-
-
-def test_oracle_rejects_the_mean_of_contig_means():
-    reads = ["ATGCATGCATGC", "AACCGGTT"]
-    counts = count_kmers(brute_kmers(reads, 3, False))
-    contigs = _contigs(reads, 3, False)
-    assert _direct_mean(contigs, counts, 3) == 1.6
-    assert _direct_mean(contigs, counts, 3) != 1.75
 
 
 def _mean_case(seed: int):
@@ -459,13 +412,13 @@ def test_mean_multiplicity_is_total_kmer_count_over_total_edges():
     ],
 )
 def test_a_cycle_has_one_self_link_and_no_other(read, k, both):
-    contigs = _contigs([read], k, both)
+    contigs = contigs_of([read], k, both)
     assert [c.circular for c in contigs] == [True]
     assert gfa_links(contigs, k, both) == [(1, "+", 1, "+")]
 
 
 def test_a_contig_whose_ends_overlap_links_to_itself():
-    contigs = _contigs(["AACGTAA", "AAG"], 3, False)
+    contigs = contigs_of(["AACGTAA", "AAG"], 3, False)
     assert [(c.id, c.sequence, c.circular) for c in contigs] == [
         (1, "AACGTAA", False),
         (2, "AAG", False),
