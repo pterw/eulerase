@@ -34,8 +34,10 @@ python tools/check_fresh_export.py
 The third runs the tests on a copy of the tracked working-tree files only, so a new file must be
 staged (`git add <file>`) before it runs, or the copy lacks it.
 
-CI runs the same three gates on Windows and Linux for every push to `main` and for every pull
-request that changes anything but documentation. The documentation paths are the four in the
+CI runs the first two gates, pytest and ruff, in four jobs (Python 3.13 on Windows, Linux and
+macOS, and Python 3.15 on Linux) for every push to `main` and for every pull request that changes
+anything but documentation. The third gate is run locally only: in CI the checkout holds only
+tracked files, so it would add nothing there. The documentation paths are the four in the
 workflow's `paths-ignore` (Markdown under `docs/`, `CONTRIBUTING.md`, the issue templates and the
 pull request template); they hold no code, test, tool, `pyproject.toml`, `README.md`, `LICENSE`,
 `AGENTS.md` or workflow. A documentation-only pull request therefore shows no CI run.
@@ -51,7 +53,8 @@ commit those gates tested `v<version>` and attaches the source distribution and 
 GitHub release of that name. A merge that does not change the version releases nothing. After a
 release pull request is merged, wait for its run to finish before merging anything else.
 
-Nothing is uploaded to a package index, and no one tags by hand.
+The release workflow then publishes each release, after its GitHub release, to TestPyPI and then
+PyPI. No one tags by hand.
 
 ## Commits
 

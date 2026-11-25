@@ -63,8 +63,9 @@ trail 1 (7 edges): ASEULERA
 
 ## Install and check
 
-Python 3.13 or later is required. Eulerase is run from a clone of this repository; nothing is
-uploaded to a package index. From the clone, in a virtual environment:
+Python 3.13 or later is required. Eulerase is run from a clone of this repository; the release
+workflow publishes each release, after its GitHub release, to TestPyPI and then PyPI. From the
+clone, in a virtual environment:
 
 ```
 python -m pip install -e ".[dev]"

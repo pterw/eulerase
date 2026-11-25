@@ -33,7 +33,8 @@ The quotes around the extras keep the shell from treating `[dev]` as a pattern.
 
 Three gates run in this order from the repository root, before every commit. A gate passes when
 its command exits 0, and a report quotes the last line of its output. This block is the
-repository's statement of the gate commands, and the workflow must equal it.
+repository's statement of the gate commands. The workflow runs every gate that is not marked
+`local: yes`, and its commands must equal the block's.
 
 ```gates
 - name: pytest
@@ -48,6 +49,7 @@ repository's statement of the gate commands, and the workflow must equal it.
   run: python tools/check_fresh_export.py
   pass: exit 0
   quote: last line
+  local: yes
 ```
 
 The third gate runs the tests on a copy of the tracked working-tree files, so a new file must be
@@ -68,8 +70,8 @@ The version is in `pyproject.toml` and in `src/eulerase/__init__.py`; a test hol
 A release is a pull request that changes the version and adds its entry to `CHANGELOG.md`. After
 it is merged and the gates are green on `main`, the release workflow tags the commit its gates
 tested `v<version>` and attaches a source distribution and a wheel to a GitHub release. A merge
-that does not change the version releases nothing. No one tags by hand. Nothing is uploaded to a
-package index.
+that does not change the version releases nothing. No one tags by hand. The release workflow also
+publishes each release, after its GitHub release, to TestPyPI and then PyPI.
 
 ## Markdown
 

@@ -32,22 +32,38 @@ STEP_KEYS = [
     ["name", "run"],
     ["name", "run"],
     ["name", "run"],
-    ["name", "run"],
+]
+JOB_NAME = "    name: gates (${{ matrix.os }}, ${{ matrix.python-version }})"
+PYTHON_FROM_MATRIX = "          python-version: ${{ matrix.python-version }}"
+FROZEN_MATRIX = [
+    "        os: [windows-latest, ubuntu-latest, macos-latest]",
+    '        python-version: ["3.13"]',
+    "        include:",
+    "          - os: ubuntu-latest",
+    '            python-version: "3.15"',
 ]
 WITH_KEYS = [
     ["persist-credentials"],
     ["cache", "cache-dependency-path", "python-version"],
 ]
-OS_LIST = re.compile(r"os: \[([^,\]]+), ([^,\]]+)\]")
 
 
 def documented_gates(agents_text: str) -> list[str]:
-    """The `run:` values of the fenced `gates` block."""
+    """The `run:` values of the fenced `gates` block's items not marked `local: yes`."""
     lines = [line.strip() for line in agents_text.splitlines()]
     assert "```gates" in lines, "AGENTS.md has no gates block"
     block = lines[lines.index("```gates") + 1 :]
     block = block[: block.index("```")]
-    return [line[4:].strip() for line in block if line.startswith("run:")]
+    items: list[list[str]] = []
+    for line in block:
+        if line.startswith("- name:"):
+            items.append([])
+        items[-1].append(line)
+    return [
+        next(x[4:].strip() for x in item if x.startswith("run:"))
+        for item in items
+        if "local: yes" not in item
+    ]
 
 
 def workflow_runs(workflow_text: str) -> list[str]:
@@ -131,17 +147,18 @@ def workflow_flaws(workflow_text: str) -> list[str]:
     if "      fail-fast: false" not in strategy:
         flaws.append("fail-fast is not false")
     matrix = _block(strategy, "      matrix:")
-    systems = [OS_LIST.fullmatch(x.strip()) for x in matrix]
-    if _keys(matrix, 8) != ["os"] or not systems[0]:
-        flaws.append("matrix is not one os list")
-    elif set(systems[0].groups()) != {"windows-latest", "ubuntu-latest"}:
-        flaws.append("matrix lost a system")
+    if matrix != FROZEN_MATRIX:
+        flaws.append("matrix is not the four frozen jobs")
+    if JOB_NAME not in job:
+        flaws.append("job name does not tell the four jobs apart")
 
     steps = _steps(job)
     if [sorted(_keys(s, 8)) for s in steps] != STEP_KEYS:
-        flaws.append("steps are not the six frozen steps")
+        flaws.append("steps are not the five frozen steps")
     elif [sorted(_keys(_block(s, "        with:"), 10)) for s in steps[:2]] != WITH_KEYS:
         flaws.append("a uses step has other with keys")
+    elif PYTHON_FROM_MATRIX not in _block(steps[1], "        with:"):
+        flaws.append("setup-python does not take the matrix's Python")
     if any(len(s) != 2 for s in steps if "run" in _keys(s, 8)):
         flaws.append("a gate step has a continued or extra line")
     return flaws
@@ -167,7 +184,7 @@ def _read(path: str) -> str:
 
 def test_workflow_runs_the_documented_gates_in_order():
     documented = documented_gates(_read("AGENTS.md"))
-    assert len(documented) >= 3
+    assert len(documented) >= 2
     assert problems(_read(".github/workflows/gates.yml"), documented) == []
 
 
@@ -187,9 +204,24 @@ def _swap_first_two_gates(text: str) -> str:
 
 RUFF_STEP = "      - name: ruff\n        run: python -m ruff check .\n"
 EXPORT_STEP = "      - name: fresh-export\n        run: python tools/check_fresh_export.py\n"
+MACOS_LIST = "[windows-latest, ubuntu-latest, macos-latest]"
+INCLUDE = '        include:\n          - os: ubuntu-latest\n            python-version: "3.15"\n'
 DRIFTS = {
     "gate command altered": _edit("python -m ruff check .", "python -m ruff check src"),
-    "gate removed": _edit(EXPORT_STEP, ""),
+    "gate not marked local missing": _edit(RUFF_STEP, ""),
+    "fresh-export step present": _edit(RUFF_STEP, RUFF_STEP + EXPORT_STEP),
+    "macOS entry removed": _edit(MACOS_LIST, "[windows-latest, ubuntu-latest]"),
+    "macOS left only in a comment": _edit(
+        MACOS_LIST, "[windows-latest, ubuntu-latest]  # macos-latest"
+    ),
+    "3.15 include removed": _edit(INCLUDE, ""),
+    "3.15 include moved to windows": _edit(
+        "- os: ubuntu-latest\n            python-version",
+        "- os: windows-latest\n            python-version",
+    ),
+    "python-version hard-coded in setup-python": _edit(
+        PYTHON_FROM_MATRIX, '          python-version: "3.13"'
+    ),
     "gates swapped": _swap_first_two_gates,
     "extra run between gates": _edit(
         RUFF_STEP, "      - name: x\n        run: echo x\n" + RUFF_STEP
@@ -211,14 +243,7 @@ DRIFTS = {
     "push trigger removed": _edit("  push:\n    branches: [main]\n", ""),
     "pull_request types": _edit("  pull_request:\n", "  pull_request:\n    types: [closed]\n"),
     "permissions widened": _edit("contents: read", "contents: write"),
-    "system left only in a comment": _edit(
-        "[windows-latest, ubuntu-latest]", "[windows-latest]  # ubuntu-latest"
-    ),
-    "exclude entry": _edit(
-        "        os: [windows-latest, ubuntu-latest]\n",
-        "        os: [windows-latest, ubuntu-latest]\n"
-        "        exclude:\n          - os: ubuntu-latest\n",
-    ),
+    "exclude entry": _edit(INCLUDE, INCLUDE + "        exclude:\n          - os: macos-latest\n"),
     "hard-coded runs-on": _edit("runs-on: ${{ matrix.os }}", "runs-on: ubuntu-latest"),
     "fail-fast true": _edit("fail-fast: false", "fail-fast: true"),
     "continue-on-error on a gate": _edit(
@@ -249,3 +274,10 @@ def test_oracle_rejects_a_drifted_workflow(drift):
     broken = drift(frozen)
     assert broken != frozen
     assert problems(broken, documented) != []
+
+
+def test_the_matrix_drift_cases_differ_from_each_other_and_from_the_real_text():
+    frozen = _read(".github/workflows/gates.yml")
+    macos = DRIFTS["macOS entry removed"](frozen)
+    python = DRIFTS["3.15 include removed"](frozen)
+    assert len({frozen, macos, python}) == 3
