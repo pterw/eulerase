@@ -251,6 +251,20 @@ def test_a_folder_that_cannot_be_written_is_refused(tmp_path, capsys, monkeypatc
     assert not (tmp_path / "a.gfa").exists()
 
 
+def test_an_existing_file_that_cannot_be_written_is_refused(tmp_path, capsys, monkeypatch):
+    existing = tmp_path / "out.gfa"
+    existing.write_bytes(b"old bytes")
+    # Only the file is refused: the folder, which is writable, cannot be what the command meets.
+    monkeypatch.setattr(cli.os, "access", lambda path, mode: Path(path) != existing)
+    assert cli.os.access(tmp_path, cli.os.W_OK)
+    assert not cli.os.access(existing, cli.os.W_OK)
+
+    code = cli.main(["--seq", _SEQ, "-k", "4", "--gfa", str(existing)])
+    out, err = capsys.readouterr()
+    assert code == 1 and out == "" and err.count("\n") == 1 and "--gfa" in err
+    assert existing.read_bytes() == b"old bytes"
+
+
 @pytest.mark.parametrize("name", ["graph.bmp", "graph"])
 def test_unsupported_figure_format_is_refused(tmp_path, capsys, name):
     target = tmp_path / name

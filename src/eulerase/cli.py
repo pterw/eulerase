@@ -239,10 +239,14 @@ def _check_output_paths(args: argparse.Namespace) -> None:
             raise EuleraseError(
                 f"{option} '{path}' is in a folder that does not exist; create it first."
             )
-        if not os.access(folder, os.W_OK):
-            raise EuleraseError(
-                f"{option} '{path}' is in a folder that cannot be written; choose another."
+        overwrite = target.exists()
+        if not os.access(target if overwrite else folder, os.W_OK):
+            what = (
+                "is a file that cannot be written"
+                if overwrite
+                else "is in a folder that cannot be written"
             )
+            raise EuleraseError(f"{option} '{path}' {what}; choose another.")
 
 
 @contextmanager
