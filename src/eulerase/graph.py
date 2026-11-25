@@ -64,32 +64,23 @@ def trail_cover(g: nx.MultiDiGraph) -> list[Trail]:
         for i, (sk, sc) in enumerate(zip(sinks, sources)):
             adj[sk].append((sc, f"__dummy_{i}__", True))
 
-        if not sources:
+        if not sources:  # balanced: one circuit, no dummy edge
             start = min(comp, key=lambda n: (g.out_degree(n) == 0, n))
-            circuit = _hierholzer(adj, start)
-            real = tuple((u, v, k) for u, v, k, d in circuit if not d)
-            if real:
-                trails.append(real)
+            trails.append(tuple((u, v, k) for u, v, k, _ in _hierholzer(adj, start)))
             continue
 
+        # Sources imply sinks, so the closed walk crosses a dummy edge; cut it after the first.
         raw = _hierholzer(adj, sinks[0])
-        dummy_idx = [i for i, step in enumerate(raw) if step[3]]
-        if not dummy_idx:
-            trails.append(tuple((u, v, k) for u, v, k, d in raw if not d))
-            continue
-        first_d = dummy_idx[0]
+        first_d = next(i for i, step in enumerate(raw) if step[3])
         rotated = raw[first_d + 1 :] + raw[: first_d + 1]
 
         cur: list[WalkEdge] = []
         for u, v, key, dummy in rotated:
-            if dummy:
-                if cur:
-                    trails.append(tuple(cur))
-                    cur = []
+            if dummy:  # a dummy edge never follows another, and the walk ends on one
+                trails.append(tuple(cur))
+                cur = []
             else:
                 cur.append((u, v, key))
-        if cur:
-            trails.append(tuple(cur))
     return trails
 
 
