@@ -179,6 +179,11 @@ class Worker(Protocol):
         the window's interpreter; its outcome goes to the same place as a thread job's."""
         ...
 
+    def end_process(self) -> None:
+        """End the running process at once, if there is one; nothing of it is delivered
+        afterwards."""
+        ...
+
 
 class Scheduler(Protocol):
     def after(self, delay_ms: int, callback: Callable[[], None]) -> object: ...
@@ -384,6 +389,7 @@ class Presenter:
         try:
             settings, records = _settings(form), _records(form)
         except EuleraseError as error:
+            self._worker.end_process()  # a build that fails to parse abandons the running one
             self._fail(str(error))
             return
         # Above the core's limit the core refuses, so no question and no process.
@@ -400,6 +406,8 @@ class Presenter:
             self._view.show_status("Build cancelled; nothing was changed.")
             return
         self.pause()
+        if self._phase == BUSY:
+            self._worker.end_process()  # a new build abandons the running one, however it runs
         self._token += 1  # abandons any build still running
         self._clear_result()
         self._phase = BUSY
@@ -419,6 +427,7 @@ class Presenter:
         if self._phase != BUSY:
             return
         self._token += 1
+        self._worker.end_process()
         self._phase = EMPTY
         self._view.show_busy(False)
         self._view.show_status("Stopped.")
@@ -557,6 +566,7 @@ class Presenter:
 
     def shutdown(self) -> None:
         self._cancel_tick()
+        self._worker.end_process()  # closing never leaves a build running, or waits for it
 
     def quit(self) -> None:
         self.shutdown()

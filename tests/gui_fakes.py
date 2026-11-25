@@ -122,11 +122,12 @@ class FakeScheduler:
 
 class FakeWorker:
     """Keeps the started jobs and processes; nothing runs until a test says so. A shared `log`
-    records the starts in order with a view's calls."""
+    records the starts and the ends in order with a view's calls."""
 
     def __init__(self, log: list[tuple] | None = None):
         self.jobs: list[Callable[[], BuildOutcome]] = []
         self.processes: list[tuple[int, Callable[..., BuildOutcome], tuple]] = []
+        self.ended = 0  # the calls of end_process
         self._log = log
 
     def start(self, job: Callable[[], BuildOutcome]) -> None:
@@ -138,6 +139,11 @@ class FakeWorker:
         if self._log is not None:
             self._log.append(("worker_start_process",))
         self.processes.append((token, function, args))
+
+    def end_process(self) -> None:
+        if self._log is not None:
+            self._log.append(("worker_end_process",))
+        self.ended += 1
 
     def run_without_delivering(self, i: int) -> BuildOutcome:
         return self.jobs[i]()

@@ -2,6 +2,7 @@
 A build the question covers runs in a process, any other in the thread."""
 
 import pickle
+from dataclasses import replace
 
 import pytest
 from gui_fakes import SHORT_READ, FakeScheduler, FakeView, FakeWorker
@@ -115,6 +116,7 @@ def test_declining_leaves_the_screen_the_build_and_the_walk_as_they_were(state):
     assert view.status_is_error is False
     assert (presenter.phase, presenter.analysis, view.result, scheduler.pending) == before
     assert (len(worker.jobs), len(worker.processes)) == (jobs, processes)
+    assert worker.ended == 0, "a declined question abandons nothing"
     assert presenter.playing == (state == "walk playing")
     if state == "build running":  # not abandoned: its outcome still arrives
         worker.finish(0, presenter)
@@ -133,3 +135,88 @@ def test_an_input_above_the_core_limit_is_refused_not_confirmed(monkeypatch):
     assert confirms(view) == []
     assert (presenter.phase, view.status_is_error) == (EMPTY, True)
     assert "40" in view.status
+
+
+def running_large_build():
+    """A first large build in flight: it started a process and ended none."""
+    view, worker, scheduler, presenter = rig()
+    view.form = big_form(55)
+    presenter.build()
+    assert (len(worker.processes), worker.ended, presenter.phase) == (1, 0, BUSY)
+    return view, worker, scheduler, presenter
+
+
+def test_stop_ends_the_process_and_the_abandoned_outcome_changes_nothing():
+    view, worker, _, presenter = running_large_build()
+
+    presenter.stop()
+
+    assert (worker.ended, presenter.phase) == (1, EMPTY)
+    mark = len(view.calls)
+    token, function, args = worker.processes[0]
+    presenter.on_build_outcome(function(token, *args))  # as if it had finished just before
+    assert (presenter.phase, view.result, view.calls[mark:]) == (EMPTY, None, [])
+
+
+@pytest.mark.parametrize("before", ["no build yet", "a finished large build"])
+def test_stop_with_no_build_running_ends_nothing(before):
+    view, worker, _, presenter = rig()
+    if before == "a finished large build":
+        view.form = big_form(55)
+        presenter.build()
+        token, function, args = worker.processes[0]
+        presenter.on_build_outcome(function(token, *args))
+        assert presenter.phase == READY
+
+    presenter.stop()
+
+    assert worker.ended == 0
+
+
+@pytest.mark.parametrize(
+    ("first", "new_length", "ends"),
+    [
+        ("running", 55, 1),  # a new large build
+        ("running", 20, 1),  # a new small build: the running process ends all the same
+        ("finished", 55, 0),  # nothing is running, so nothing is ended
+    ],
+)
+def test_a_new_build_ends_a_running_process_before_it_starts_its_own(first, new_length, ends):
+    view, worker, _, presenter = running_large_build()
+    if first == "finished":
+        token, function, args = worker.processes[0]
+        presenter.on_build_outcome(function(token, *args))
+        assert presenter.phase == READY
+    view.form = big_form(new_length)
+    mark = len(view.calls)
+
+    presenter.build()
+
+    assert worker.ended == ends
+    new = "worker_start_process" if new_length == 55 else "worker_start"
+    worker_calls = [call[0] for call in view.calls[mark:] if call[0].startswith("worker_")]
+    assert worker_calls == (["worker_end_process"] if ends else []) + [new]
+
+
+def test_a_build_that_fails_to_parse_abandons_the_running_process_and_a_later_one_leaves_none():
+    view, worker, _, presenter = running_large_build()
+    view.form = replace(big_form(55), k_text="x")
+
+    presenter.build()
+
+    assert (worker.ended, presenter.phase) == (1, EMPTY), "the first build was left running"
+    view.form = big_form(55)
+    presenter.build()
+    assert (len(worker.processes), worker.ended, presenter.phase) == (2, 1, BUSY)
+
+
+@pytest.mark.parametrize("close", ["quit", "shutdown"])
+def test_closing_ends_the_running_process_before_the_window_closes(close):
+    view, worker, _, presenter = running_large_build()
+
+    getattr(presenter, close)()
+
+    assert worker.ended == 1
+    names = [call[0] for call in view.calls]
+    if close == "quit":
+        assert names.index("worker_end_process") < names.index("close")
