@@ -6,9 +6,10 @@ import gzip
 import io
 import os
 import re
+import warnings
 import zlib
 
-from Bio import SeqIO
+from Bio import BiopythonParserWarning, SeqIO
 from Bio.Seq import Seq
 from Bio.SeqFeature import CompoundLocation, SeqFeature, SimpleLocation
 from Bio.SeqRecord import SeqRecord
@@ -78,8 +79,10 @@ def read_records(path: str | os.PathLike) -> list[Record]:
         found = parse_records(text)
     else:
         try:
-            parsed = SeqIO.parse(io.StringIO(text), fmt)
-            found = [Record(rec.id, str(rec.seq).upper()) for rec in parsed]
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore", BiopythonParserWarning)
+                parsed = SeqIO.parse(io.StringIO(text), fmt)
+                found = [Record(rec.id, str(rec.seq).upper()) for rec in parsed]
         except ValueError:
             raise EuleraseError(
                 f"The file '{name}' could not be read as {fmt.upper()}; "

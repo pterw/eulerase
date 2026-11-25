@@ -1,11 +1,13 @@
 """Reading sequence files: every format, plain or gzip, loads every record."""
 
 import codecs
+import contextlib
 import gzip
 import io
+import warnings
 
 import pytest
-from Bio import SeqIO
+from Bio import BiopythonParserWarning, SeqIO
 from Bio.Seq import Seq
 from Bio.SeqRecord import SeqRecord
 from genomes import random_dna
@@ -70,18 +72,39 @@ def test_a_directory_is_an_error_not_an_oserror(tmp_path):
         read_records(tmp_path)
 
 
-@pytest.mark.filterwarnings("ignore::Bio.BiopythonParserWarning")
-def test_biopython_failure_becomes_one_sentence(tmp_path):
-    path = tmp_path / "bad.gb"
-    path.write_text(
-        "LOCUS       X1                10 bp    DNA     linear   UNK 01-JAN-1980\n"
-        "FEATURES             Location/Qualifiers\n"
-        "     CDS             join(1..\n"
-        "ORIGIN\n"
-        "        1 acgtacgtac\n//\n"
-    )
-    with pytest.raises(EuleraseError) as caught:
-        read_records(path)
+@pytest.mark.parametrize(
+    ("fmt", "text"),
+    [
+        (
+            "genbank",
+            "LOCUS       X1                10 bp    DNA     linear   UNK 01-JAN-1980\n"
+            "FEATURES             Location/Qualifiers\n"
+            "     CDS             join(1..\n"
+            "ORIGIN\n"
+            "        1 acgtacgtac\n//\n",
+        ),
+        (
+            "embl",
+            "ID   X1; SV 1; linear; DNA; STD; UNC; 10 BP.\n"
+            "FH   Key             Location/Qualifiers\n"
+            "FT   CDS             join(1..\n"
+            "SQ   Sequence 10 BP; 3 A; 3 C; 2 G; 2 T; 0 other;\n"
+            "     acgtacgtac                                                          10\n//\n",
+        ),
+    ],
+    ids=["genbank", "embl"],
+)
+def test_biopython_failure_becomes_one_sentence(tmp_path, fmt, text):
+    path = tmp_path / "bad.txt"
+    path.write_text(text)
+    # the precondition: Biopython itself warns on this text, so a silent read is the reader's doing
+    with pytest.warns(BiopythonParserWarning), contextlib.suppress(ValueError):
+        list(SeqIO.parse(io.StringIO(text), fmt))
+    with warnings.catch_warnings(record=True) as raised:
+        warnings.simplefilter("always")
+        with pytest.raises(EuleraseError) as caught:
+            read_records(path)
+    assert raised == []
     assert "\n" not in str(caught.value)
     assert "Traceback" not in str(caught.value)
 
