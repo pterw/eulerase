@@ -69,11 +69,13 @@ def test_each_output_option_writes_its_file(written):
     paths = written
     a = _analysis()
 
-    fasta = list(SeqIO.parse(paths["contigs"], "fasta"))
+    with open(paths["contigs"], encoding="utf-8") as handle:
+        fasta = list(SeqIO.parse(handle, "fasta"))
     assert [(r.id, str(r.seq)) for r in fasta] == [(f"ctg{c.id}", c.sequence) for c in a.contigs]
     assert len(fasta) >= 1
 
-    genbank = list(SeqIO.parse(paths["genbank"], "genbank"))
+    with open(paths["genbank"], encoding="utf-8") as handle:
+        genbank = list(SeqIO.parse(handle, "genbank"))
     assert [str(r.seq) for r in genbank] == [c.sequence for c in a.contigs]
 
     segments = [
