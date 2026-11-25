@@ -4,6 +4,8 @@ Nothing here runs at import: no widget, no root, no thread. A `Window` is built 
 reaches its presenter only through `bind`, so no callback is wired before then.
 """
 
+import queue
+import threading
 import tkinter
 import tkinter.filedialog
 import tkinter.font
@@ -16,11 +18,14 @@ from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolb
 from matplotlib.figure import Figure
 
 from eulerase import render
+from eulerase.errors import EuleraseError
 from eulerase.gui.presenter import (
     EXAMPLES,
     EXPORT_KINDS,
     MIN_WINDOW,
+    BuildOutcome,
     FormValues,
+    Presenter,
     ResultView,
     TableView,
     fit_window,
@@ -50,6 +55,7 @@ DASH_PATTERNS = {"solid": (), "dashed": (6, 3), "dotted": (2, 3)}  # Tk dash, by
 MIN_CANVAS_PX = 2  # a canvas not yet mapped reports 1
 RESIZE_DELAY_MS = 150  # a drag of the window edge lays out once, after it stops
 ZOOM_IN, ZOOM_OUT = 0.85, 1.18  # one wheel notch, as a factor of the visible range
+POLL_MS = 100  # how often the window looks for a finished build
 
 
 @dataclass(frozen=True)
@@ -678,3 +684,67 @@ class Window:
         axes.set_ylim(self._home[1])
         self.toolbar.update()
         self.canvas.draw_idle()
+
+
+class ThreadWorker:
+    """Runs a build off the window's thread. Outcomes wait in a queue that `poll` empties on the
+    window's thread; the worker touches no widget."""
+
+    def __init__(self):
+        self._outcomes: queue.SimpleQueue[BuildOutcome] = queue.SimpleQueue()
+
+    def start(self, job) -> None:
+        threading.Thread(target=lambda: self._outcomes.put(job()), daemon=True).start()
+
+    def poll(self) -> list[BuildOutcome]:
+        found = []
+        while True:
+            try:
+                found.append(self._outcomes.get_nowait())
+            except queue.Empty:
+                return found
+
+
+class TkScheduler:
+    """The presenter's timer, on the root's event loop."""
+
+    def __init__(self, root):
+        self._root = root
+
+    def after(self, delay_ms: int, callback):
+        return self._root.after(delay_ms, callback)
+
+    def cancel(self, handle) -> None:
+        self._root.after_cancel(handle)
+
+
+def _poll(root, worker: ThreadWorker, presenter: Presenter) -> None:
+    """Pass the finished builds to the presenter, then look again. The next look is booked
+    first, so a failure in the presenter cannot end the polling."""
+    root.after(POLL_MS, lambda: _poll(root, worker, presenter))
+    for outcome in worker.poll():
+        presenter.on_build_outcome(outcome)
+
+
+def _make_root():
+    try:
+        return tkinter.Tk()
+    except tkinter.TclError as error:
+        raise EuleraseError(
+            "The window needs a display, and none is available here; "
+            "the command-line options still work."
+        ) from error
+
+
+def start(form: FormValues | None = None) -> int:
+    """Build the application, show `form` (the first example when None) and run until the
+    window closes."""
+    root = _make_root()
+    window = Window(root)
+    worker = ThreadWorker()
+    presenter = Presenter(window, worker, TkScheduler(root), layout=render.compute_layout)
+    window.bind(presenter)
+    _poll(root, worker, presenter)
+    presenter.open_with(form)
+    root.mainloop()
+    return 0
