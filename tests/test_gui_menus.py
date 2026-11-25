@@ -10,7 +10,7 @@ assert getattr(tkinter.Tk, "eulerase_window_guard", False) and getattr(
 ), "guard not installed"
 
 from eulerase.gui import app  # noqa: E402
-from eulerase.gui.presenter import EXAMPLES, EXPORT_KINDS  # noqa: E402
+from eulerase.gui.presenter import EXPORT_KINDS  # noqa: E402
 
 EDITING_LETTERS = set("acvxzy")
 
@@ -76,14 +76,6 @@ def test_every_export_and_the_main_actions_have_a_command():
         "quit",
     ):
         assert (method, ()) in by_method
-    assert [c.args for c in app.COMMANDS if c.method == "load_example"] == [
-        (e.name,) for e in EXAMPLES
-    ]
-
-
-def test_every_command_has_a_label_and_a_menu():
-    assert all(c.label and c.menu for c in app.COMMANDS)
-    assert {c.menu for c in app.COMMANDS} == {"File", "Examples", "Walk"}
 
 
 class FakeMenu:

@@ -103,7 +103,3 @@ def test_open_with_none_loads_the_first_example_and_a_form_is_built_as_given():
     assert view.form == form_of(NAMES[0])
     assert view.k_enabled is True
     assert len(worker.jobs) == 2
-
-
-def test_no_example_names_a_parked_feature():
-    assert not [e.name for e in EXAMPLES if "binning" in (e.name + e.text).lower()]

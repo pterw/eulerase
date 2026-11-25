@@ -110,21 +110,22 @@ def good_then(**changes):
 
 
 FAILURES = [
-    pytest.param(good_then(text=""), None, id="empty input"),
-    pytest.param(good_then(text="LEMONLEMON", both_strands=True), None, id="both strands on text"),
-    pytest.param(good_then(k_text="99"), None, id="k above every record"),
-    pytest.param(good_then(k_text="abc"), None, id="k not a number"),
-    pytest.param(good_then(k_text="4.0"), None, id="k with a decimal point"),
-    pytest.param(good_then(k_text="1"), None, id="k below 2"),
-    pytest.param(good_then(min_multiplicity_text="0"), None, id="minimum below 1"),
-    pytest.param(good_then(min_multiplicity_text="x"), None, id="minimum not a number"),
-    pytest.param(SHORT_READ, RuntimeError("boom"), id="a bug in the job"),
+    pytest.param(good_then(text=""), None, False, id="empty input"),
+    pytest.param(
+        good_then(text="LEMONLEMON", both_strands=True), None, False, id="both strands on text"
+    ),
+    pytest.param(good_then(k_text="99"), None, False, id="k above every record"),
+    pytest.param(good_then(k_text="abc"), None, False, id="k not a number"),
+    pytest.param(good_then(k_text="4.0"), None, False, id="k with a decimal point"),
+    pytest.param(good_then(k_text="1"), None, True, id="k below 2"),
+    pytest.param(good_then(min_multiplicity_text="0"), None, False, id="minimum below 1"),
+    pytest.param(good_then(min_multiplicity_text="x"), None, False, id="minimum not a number"),
+    pytest.param(SHORT_READ, RuntimeError("boom"), False, id="a bug in the job"),
 ]
-REFUSED_BEFORE_ANY_JOB = {"k below 2"}  # an invalid k must never reach the worker
 
 
-@pytest.mark.parametrize("bad_form, bug", FAILURES)
-def test_a_failed_build_clears_the_result_and_export_is_unavailable(request, bad_form, bug):
+@pytest.mark.parametrize("bad_form, bug, no_job", FAILURES)
+def test_a_failed_build_clears_the_result_and_export_is_unavailable(bad_form, bug, no_job):
     armed = []
 
     def layout(a, aspect):
@@ -140,7 +141,7 @@ def test_a_failed_build_clears_the_result_and_export_is_unavailable(request, bad
     armed.extend([bug] if bug else [])
     mark = len(view.calls)
     presenter.build()
-    if request.node.callspec.id in REFUSED_BEFORE_ANY_JOB:
+    if no_job:  # an invalid k must never reach the worker
         assert len(worker.jobs) == 1  # only the good build's job
     if len(worker.jobs) > 1:  # this failure is found inside the job
         worker.finish(1, presenter)
@@ -152,7 +153,7 @@ def test_a_failed_build_clears_the_result_and_export_is_unavailable(request, bad
     assert view.busy is False
     assert view.status_is_error
     assert view.status and "\n" not in view.status and "Traceback" not in view.status
-    assert type(bug).__name__ in view.status if bug else True
+    assert bug is None or type(bug).__name__ in view.status
 
 
 @pytest.mark.parametrize(
