@@ -193,8 +193,9 @@ def main(argv: Sequence[str] | None = None) -> int:
             return _start_window(args, has_input)
         _check_output_paths(args)
         result = analyze(_records(args), _settings(args))
+        texts = _export_texts(args, result)
         _print_results(args, result)
-        _write_outputs(args, result)
+        _write_outputs(args, result, texts)
     except EuleraseError as err:
         print(f"eulerase: {err}", file=sys.stderr)
         return 1
@@ -268,7 +269,15 @@ def _print_results(args: argparse.Namespace, result: Analysis) -> None:
         _print_metrics(result)
 
 
-def _write_outputs(args: argparse.Namespace, result: Analysis) -> None:
+def _export_texts(args: argparse.Namespace, result: Analysis) -> dict[str, str]:
+    """Build the GFA, FASTA and GenBank texts asked for; a refusal comes before any output."""
+    writers = {"gfa": io.gfa_text, "contigs": io.fasta_text, "genbank": io.genbank_text}
+    return {
+        dest: write(result) for dest, write in writers.items() if getattr(args, dest) is not None
+    }
+
+
+def _write_outputs(args: argparse.Namespace, result: Analysis, texts: dict[str, str]) -> None:
     """Write each requested file in the order figure, csv, gfa, contigs, genbank."""
     if args.figure is not None:
         with _writing(args.figure):
@@ -281,15 +290,11 @@ def _write_outputs(args: argparse.Namespace, result: Analysis) -> None:
             with _writing(path):
                 io.write_text_file(path, io.csv_text(result, table))
             print(f"Wrote {path}")
-    for path, writer in (
-        (args.gfa, io.gfa_text),
-        (args.contigs, io.fasta_text),
-        (args.genbank, io.genbank_text),
-    ):
-        if path is not None:
-            with _writing(path):
-                io.write_text_file(path, writer(result))
-            print(f"Wrote {path}")
+    for dest, text in texts.items():
+        path = getattr(args, dest)
+        with _writing(path):
+            io.write_text_file(path, text)
+        print(f"Wrote {path}")
 
 
 def _print_metrics(result: Analysis) -> None:

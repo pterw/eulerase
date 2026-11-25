@@ -154,17 +154,32 @@ def test_figure_for_a_graph_over_the_drawing_limit_says_why(tmp_path, capsys):
     assert any(f"{nodes}" in t and "400" in t for t in texts)
 
 
-def test_failed_output_is_an_error_after_the_earlier_files(tmp_path, capsys):
-    """A GenBank file cannot hold protein letters: exit 1, one line, the FASTA already written."""
-    fasta = tmp_path / "out.fasta"
-    code = cli.main(
-        ["--seq", "MKVLAAGIV", "-k", "3", "--contigs", str(fasta), "--genbank", str(tmp_path / "g")]
-    )
+@pytest.mark.parametrize(
+    ("seq", "earlier", "refused", "says"),
+    [
+        # GenBank cannot hold protein letters; FASTA cannot hold a letter outside ASCII.
+        ("MKVLAAGIV", "--figure", "--genbank", "GenBank"),
+        ("MKVLAAGIV", "--csv", "--genbank", "GenBank"),
+        ("MKVLAAGIV", "--gfa", "--genbank", "GenBank"),
+        ("MKVLAAGIV", "--contigs", "--genbank", "GenBank"),
+        ("αβγαβγαβ", "--figure", "--contigs", "ASCII"),
+        # GFA cannot hold a digit in a contig.
+        ("AC1AC1AC1", "--figure", "--gfa", "GFA"),
+    ],
+)
+def test_a_refused_export_leaves_no_file_and_prints_no_result(
+    tmp_path, capsys, seq, earlier, refused, says
+):
+    first = str(tmp_path / ("first.png" if earlier == "--figure" else "first"))
+    last = str(tmp_path / "last")
+    assert first != last
+    code = cli.main(["--seq", seq, "-k", "3", earlier, first, refused, last])
     out, err = capsys.readouterr()
     assert code == 1
-    assert err.startswith("eulerase: ") and err.count("\n") == 1
-    assert out.splitlines()[-1] == f"Wrote {fasta}"
-    assert fasta.exists() and not (tmp_path / "g").exists()
+    assert err.startswith("eulerase: ") and err.count("\n") == 1 and says in err
+    assert out == ""
+    written = eio.csv_paths(first).values() if earlier == "--csv" else [first]
+    assert [Path(p).exists() for p in (*written, last)] == [False] * (len(written) + 1)
 
 
 def test_oracle_rejects_a_wrong_file_order(tmp_path, capsys):
