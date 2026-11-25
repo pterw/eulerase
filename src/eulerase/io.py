@@ -162,13 +162,18 @@ def _written(a: Analysis, fmt: str) -> str:
 
 
 def fasta_text(a: Analysis) -> str:
-    """The contigs as FASTA text (`\\n` line endings). A contig with a letter outside ASCII is
-    refused."""
+    """The contigs as FASTA text (`\\n` line endings). A contig with a letter outside ASCII, or
+    with `>`, is refused."""
     for contig in a.contigs:
         if not contig.sequence.isascii():
             raise EuleraseError(
                 f"Contig ctg{contig.id} holds letters outside plain ASCII, which a FASTA file "
                 "cannot hold; change the input letters to ASCII."
+            )
+        if ">" in contig.sequence:
+            raise EuleraseError(
+                f"Contig ctg{contig.id} holds '>', which a FASTA file would read back as a new "
+                "record; remove '>' from the input letters."
             )
     return _written(a, "fasta")
 

@@ -267,6 +267,15 @@ def test_non_ascii_contig_is_refused_as_fasta_with_its_name():
     assert "LEMON" in gfa_text(_analysis(["LEMONLEMONADE"], k=3))
 
 
+def test_a_contig_holding_a_header_character_is_refused_as_fasta_with_its_name():
+    a = _analysis(["ACG>TCA"], k=3)
+    assert ">" in a.contigs[0].sequence
+    assert a.contigs[0].sequence.isascii()  # so the ASCII check is not what refuses it
+    with pytest.raises(EuleraseError, match="ctg1") as refused:
+        fasta_text(a)
+    assert ">" in str(refused.value)
+
+
 def _first_difference(expected: str, actual: str) -> int | None:
     """Index of the first differing character, None when the texts are identical."""
     if expected == actual:
