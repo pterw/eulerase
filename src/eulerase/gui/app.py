@@ -586,7 +586,8 @@ class Window:
     def show_busy(self, busy: bool) -> None:
         self.stop_button.state(["!disabled" if busy else "disabled"])
         if busy:
-            self.progress.pack(side="right")
+            # Packed before the status, which expands: a long status line cannot push it out.
+            self.progress.pack(side="right", before=self.status)
             self.progress.start()
         else:
             self.progress.stop()
