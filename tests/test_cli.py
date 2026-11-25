@@ -59,6 +59,17 @@ def test_main_prints_non_ascii_input_as_utf8():
     assert f"trail 1 (4 edges): {word.upper()}\n".encode() in done.stdout
 
 
+def test_main_writes_an_error_sentence_as_utf8():
+    # A Greek file name that does not exist, none of its letters writable in cp1252, so a
+    # standard error left as cp1252 would escape them instead of writing the name.
+    name = "αβγ.fa"
+    with pytest.raises(UnicodeEncodeError):
+        name.encode("cp1252")
+    done = _child("--file", name)
+    assert done.returncode == 1
+    assert done.stderr == f"eulerase: The file '{name}' does not exist; check the path.\n".encode()
+
+
 def test_each_input_form_gives_the_same_trails(tmp_path, capsys):
     # No two-letter pair repeats, so the one Eulerian path spells the input itself.
     seq = "AACCGGTTAGC"

@@ -184,6 +184,7 @@ def _start_window(args: argparse.Namespace, has_input: bool) -> int:
 
 def main(argv: Sequence[str] | None = None) -> int:
     sys.stdout.reconfigure(encoding="utf-8", newline="\n")
+    sys.stderr.reconfigure(encoding="utf-8", errors="backslashreplace", newline="\n")
     parser = _parser()
     args = parser.parse_args(argv)
     _refuse_ignored_options(args, parser)
