@@ -8,7 +8,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import NamedTuple
 
-import networkx as nx
 from matplotlib.figure import Figure
 from matplotlib.lines import Line2D
 from matplotlib.patches import Circle, FancyArrowPatch
@@ -76,23 +75,15 @@ def legend_entries(a: Analysis) -> tuple[LegendEntry, ...]:
     )
 
 
-def _walk_graph(a: Analysis) -> nx.MultiDiGraph:
-    """The walk graph again, from the nodes and steps the analysis holds."""
-    g = nx.MultiDiGraph()
-    g.add_nodes_from(row.node for row in a.nodes)
-    for trail in a.trails:
-        for s in trail:
-            g.add_edge(s.source, s.target, key=s.key, kmer=s.kmer)
-    return g
-
-
-def _counts_over_limit(g: nx.MultiDiGraph) -> list[str]:
-    """Each count of the drawing limit that `g` is over, with its number and its limit."""
+def _counts_over_limit(a: Analysis) -> list[str]:
+    """Each count of the drawing limit that `a` is over, with its number and its limit."""
+    nodes = len(a.nodes)
+    arrows = sum(len(t) for t in a.trails)
     over = []
-    if len(g) > MAX_DRAW_NODES:
-        over.append(f"{len(g)} nodes, over the limit of {MAX_DRAW_NODES}")
-    if g.number_of_edges() > MAX_DRAW_EDGES:
-        over.append(f"{g.number_of_edges()} arrows, over the limit of {MAX_DRAW_EDGES}")
+    if nodes > MAX_DRAW_NODES:
+        over.append(f"{nodes} nodes, over the limit of {MAX_DRAW_NODES}")
+    if arrows > MAX_DRAW_EDGES:
+        over.append(f"{arrows} arrows, over the limit of {MAX_DRAW_EDGES}")
     return over
 
 
@@ -114,7 +105,7 @@ def compute_layout(
     """
     if not (math.isfinite(aspect) and aspect > 0):
         raise ValueError(f"aspect must be a finite number above 0, not {aspect!r}")
-    if _counts_over_limit(_walk_graph(a)):
+    if _counts_over_limit(a):
         return None
     order: dict[str, None] = {}
     for trail in a.trails:
@@ -786,7 +777,7 @@ def _draw_note(ax, a: Analysis, tables: bool) -> None:
     """The one explanation of the drawing limit, with both counts, in place of the plot. The window
     has tables and points at them (`tables`) and no header, so its note carries the headline; a
     saved figure has a header and no tables."""
-    limits = " and ".join(_counts_over_limit(_walk_graph(a)))
+    limits = " and ".join(_counts_over_limit(a))
     note = f"(The graph is not drawn: {limits}."
     if tables:
         hint = "Use the tables below to inspect the Eulerian trails and assembly contigs."

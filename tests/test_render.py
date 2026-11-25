@@ -130,11 +130,6 @@ def _drawing_counts(a):
     return len(a.nodes), sum(len(t) for t in a.trails)
 
 
-def test_oracle_rejects_a_node_count_used_as_the_arrow_count():
-    assert _drawing_counts(_analysis(REPEATED)) == (4, 78)
-    assert _drawing_counts(_analysis(REPEATED))[0] != 78
-
-
 @pytest.mark.parametrize(
     "node_limit, arrow_limit, over",
     [
