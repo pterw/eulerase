@@ -203,17 +203,20 @@ def main(argv: Sequence[str] | None = None) -> int:
 
 def _output_paths(args: argparse.Namespace) -> list[tuple[str, str]]:
     """Every file the command would write, as (option, path)."""
-    paths = [("--figure", args.figure)] if args.figure else []
-    if args.csv:
+    paths = [("--figure", args.figure)] if args.figure is not None else []
+    if args.csv is not None:
         paths += [("--csv", path) for path in io.csv_paths(args.csv).values()]
     for option in ("--gfa", "--contigs", "--genbank"):
-        if getattr(args, option[2:]):
+        if getattr(args, option[2:]) is not None:
             paths.append((option, getattr(args, option[2:])))
     return paths
 
 
 def _check_output_paths(args: argparse.Namespace) -> None:
     """Refuse the first output that cannot be written, before any work is done."""
+    for option, dest in _OUTPUTS:
+        if getattr(args, dest) == "":
+            raise EuleraseError(f"{option} needs a file name, not an empty path; give one.")
     named: dict[str, str] = {}  # file, as the system sees it -> the option that names it
     for option, path in _output_paths(args):
         file = os.path.normcase(os.path.abspath(path))
@@ -263,11 +266,11 @@ def _print_results(args: argparse.Namespace, result: Analysis) -> None:
 
 def _write_outputs(args: argparse.Namespace, result: Analysis) -> None:
     """Write each requested file in the order figure, csv, gfa, contigs, genbank."""
-    if args.figure:
+    if args.figure is not None:
         with _writing(args.figure):
             save_figure(result, args.figure)
         print(f"Wrote {args.figure}")
-    if args.csv:
+    if args.csv is not None:
         paths = io.csv_paths(args.csv)
         for table in TABLES:
             path = paths[table.lower()]
@@ -279,7 +282,7 @@ def _write_outputs(args: argparse.Namespace, result: Analysis) -> None:
         (args.contigs, io.fasta_text),
         (args.genbank, io.genbank_text),
     ):
-        if path:
+        if path is not None:
             with _writing(path):
                 io.write_text_file(path, writer(result))
             print(f"Wrote {path}")

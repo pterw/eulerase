@@ -216,12 +216,21 @@ def _assert_refused_before_any_work(tmp_path, capsys, monkeypatch, option, run, 
     assert calls == []
 
 
-@pytest.mark.parametrize("option", [*_BAD_OPTIONS, "same file"])
+@pytest.mark.parametrize(
+    "option", [*_BAD_OPTIONS, "same file", *(f"{o} empty" for o in _BAD_OPTIONS)]
+)
 def test_a_bad_output_path_fails_before_any_output_is_written(
     tmp_path, capsys, monkeypatch, option
 ):
     bad = None
-    if option == "same file":
+    empty = option.endswith(" empty")
+    if empty:
+        # An empty path is falsy: a test by truth would skip it and write into the current folder.
+        option = option.removesuffix(" empty")
+        line = f"eulerase: {option} needs a file name, not an empty path; give one.\n"
+        bad = ([option, ""], line)
+        monkeypatch.chdir(tmp_path)
+    elif option == "same file":
         # The second spelling reaches the first csv-set file through "..": same file, other text.
         clash = f"{tmp_path}/elsewhere/../tables_edges.csv"
         line = (
@@ -230,6 +239,8 @@ def test_a_bad_output_path_fails_before_any_output_is_written(
         )
         option, bad = "--csv", (["--csv", str(tmp_path / "tables"), "--genbank", clash], line)
     _assert_refused_before_any_work(tmp_path, capsys, monkeypatch, option, cli.main, bad)
+    if empty:
+        assert list(tmp_path.iterdir()) == []  # nothing went into the current folder
 
 
 def test_a_folder_that_cannot_be_written_is_refused(tmp_path, capsys, monkeypatch):
