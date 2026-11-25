@@ -240,11 +240,15 @@ class Window:
         form = _scrolled(side)
 
         ttk.Label(form, text="Input", style="Heading.TLabel").pack(anchor="w")
+        # No wrap: wrapping a very long line by character stalls the window for seconds.
+        box = ttk.Frame(form)
+        box.pack(fill="x", pady=(4, 6))
+        box.columnconfigure(0, weight=1)
         self.text = tkinter.Text(
-            form,
+            box,
             width=34,
             height=5,
-            wrap="char",
+            wrap="none",
             font="TkFixedFont",
             background=render.SURFACE,
             foreground=render.INK,
@@ -255,7 +259,12 @@ class Window:
             highlightcolor=render.INK,
             undo=True,
         )
-        self.text.pack(fill="x", pady=(4, 6))
+        down = ttk.Scrollbar(box, orient="vertical", command=self.text.yview)
+        across = ttk.Scrollbar(box, orient="horizontal", command=self.text.xview)
+        self.text.configure(yscrollcommand=down.set, xscrollcommand=across.set)
+        self.text.grid(row=0, column=0, sticky="ew")
+        down.grid(row=0, column=1, sticky="ns")
+        across.grid(row=1, column=0, sticky="ew")
         modes = ttk.Frame(form)
         modes.pack(fill="x")
         self.mode_buttons = [
